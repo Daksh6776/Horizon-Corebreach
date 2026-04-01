@@ -1,6 +1,6 @@
 package com.horizonpack.horizoncore.network;
 
-import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.HorizonCore;
 import com.horizonpack.horizoncore.network.packets.*;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;

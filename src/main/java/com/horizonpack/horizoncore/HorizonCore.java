@@ -1,4 +1,4 @@
-package com.horizonpack.horizoncore.Horizoncore;
+package com.horizonpack.horizoncore; // Fixed package name
 
 import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
 import com.horizonpack.horizoncore.core.HorizonConfig;
@@ -16,14 +16,12 @@ import net.neoforged.neoforge.common.NeoForge;
 @Mod(HorizonCore.MODID)
 public class HorizonCore {
     public static final String MODID = "horizoncore";
-    public static final String VERSION = "1.0.0";
 
     public HorizonCore(IEventBus modEventBus, ModContainer modContainer) {
-        // Register configs
         modContainer.registerConfig(ModConfig.Type.COMMON, HorizonConfig.COMMON_SPEC);
         modContainer.registerConfig(ModConfig.Type.CLIENT, HorizonConfig.CLIENT_SPEC);
 
-        // Register all deferred registers onto the mod event bus
+        // All registries must be registered to the mod bus
         HorizonRegistries.TECHNOLOGIES.register(modEventBus);
         HorizonRegistries.SKILLS.register(modEventBus);
         HorizonRegistries.PROFESSIONS.register(modEventBus);
@@ -36,19 +34,17 @@ public class HorizonCore {
         HorizonRegistries.ITEMS.register(modEventBus);
         HorizonRegistries.MENU_TYPES.register(modEventBus);
 
-        // Lifecycle listeners on the mod bus
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(HorizonCapabilities::register);
         modEventBus.addListener(HorizonPacketHandler::register);
 
-        // Game event listeners on the NeoForge bus
         NeoForge.EVENT_BUS.register(HorizonEventHandlers.class);
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
             HorizonRegistries.init();
-            TechnologyGraph.buildGraph(); // Build the DAG after all techs are registered
+            TechnologyGraph.buildGraph();
         });
     }
 }

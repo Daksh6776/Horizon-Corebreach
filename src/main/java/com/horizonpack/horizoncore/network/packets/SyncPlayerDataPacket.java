@@ -2,7 +2,7 @@ package com.horizonpack.horizoncore.network.packets;
 
 import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
 import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
-import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;

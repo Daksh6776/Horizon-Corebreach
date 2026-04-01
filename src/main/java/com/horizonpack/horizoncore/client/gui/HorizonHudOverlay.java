@@ -2,7 +2,7 @@ package com.horizonpack.horizoncore.client.gui;
 
 import com.horizonpack.horizoncore.client.ClientHorizonData;
 import com.horizonpack.horizoncore.core.HorizonConfig;
-import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -13,7 +13,7 @@ import net.neoforged.api.distmarker.OnlyIn;
 @OnlyIn(Dist.CLIENT)
 public class HorizonHudOverlay {
 
-    private static final ResourceLocation HUD_TEXTURE = new ResourceLocation(HorizonCore.MODID, "textures/gui/hud_elements.png");
+    private static final ResourceLocation NUTRITION_BAR = ResourceLocation.fromNamespaceAndPath(HorizonCore.MODID, "textures/gui/nutrition.png");
 
     public static void render(GuiGraphics graphics, DeltaTracker deltaTracker) {
         Minecraft mc = Minecraft.getInstance();

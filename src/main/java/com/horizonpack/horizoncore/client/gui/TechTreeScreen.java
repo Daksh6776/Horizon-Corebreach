@@ -1,6 +1,6 @@
 package com.horizonpack.horizoncore.client.gui;
 
-import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -11,7 +11,7 @@ import net.neoforged.api.distmarker.OnlyIn;
 @OnlyIn(Dist.CLIENT)
 public class TechTreeScreen extends Screen {
 
-    private static final ResourceLocation BG_TEXTURE = new ResourceLocation(HorizonCore.MODID, "textures/gui/tech_tree_bg.png");
+    private static final ResourceLocation NUTRITION_BAR = ResourceLocation.fromNamespaceAndPath(HorizonCore.MODID, "textures/gui/nutrition.png");
     private double scrollX = 0;
     private double scrollY = 0;
 

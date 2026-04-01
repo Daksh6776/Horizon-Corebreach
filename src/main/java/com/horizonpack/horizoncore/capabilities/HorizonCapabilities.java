@@ -1,6 +1,6 @@
 package com.horizonpack.horizoncore.capabilities;
 
-import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Player;
 import net.neoforged.neoforge.capabilities.EntityCapability;
@@ -11,7 +11,7 @@ public class HorizonCapabilities {
 
     public static final EntityCapability<IHorizonPlayerData, Void> PLAYER_DATA =
             EntityCapability.create(
-                    new ResourceLocation(HorizonCore.MODID, "player_data"),
+                    ResourceLocation.fromNamespaceAndPath(HorizonCore.MODID, "player_data"),
                     IHorizonPlayerData.class,
                     Void.class
             );
