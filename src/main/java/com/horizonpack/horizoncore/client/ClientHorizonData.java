@@ -1,24 +1,18 @@
 package com.horizonpack.horizoncore.client;
 
-import com.horizonpack.horizoncore.capabilities.HorizonPlayerData;
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
 import com.horizonpack.horizoncore.data.HorizonAge;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
-@OnlyIn(Dist.CLIENT)
 public class ClientHorizonData {
-    // Stores the client's localized understanding of the world age
-    public static HorizonAge currentAge = HorizonAge.STONE_AGE;
+    public static IHorizonPlayerData playerData;
+    public static int toastTicksRemaining;
+    public static String lastSkillToast;
+    private static HorizonAge currentAge = HorizonAge.STONE_AGE;
+    private static float hydration = 100f;
 
-    // Stores the client's localized player data
-    public static final HorizonPlayerData playerData = new HorizonPlayerData();
+    public static void setAge(HorizonAge age) { currentAge = age; }
+    public static HorizonAge getAge() { return currentAge; }
 
-    // Skill toast queue (populated by SkillUpdatePacket)
-    public static String lastSkillToast = "";
-    public static int toastTicksRemaining = 0;
-
-    public static void setSkillToast(String skillName, int xp) {
-        lastSkillToast = "+" + xp + " " + skillName + " XP";
-        toastTicksRemaining = 60; // 3 seconds at 20 ticks
-    }
+    public static void setHydration(float h) { hydration = h; }
+    public static float getHydration() { return hydration; }
 }

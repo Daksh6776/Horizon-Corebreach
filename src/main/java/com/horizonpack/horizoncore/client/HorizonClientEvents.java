@@ -1,5 +1,6 @@
 package com.horizonpack.horizoncore.client;
 
+import com.horizonpack.horizoncore.client.HorizonKeybinds;
 import com.horizonpack.horizoncore.client.gui.HorizonHudOverlay;
 import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.resources.ResourceLocation;
@@ -7,18 +8,32 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import org.jetbrains.annotations.NotNull;
+import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 
-// Removed the "Mod." prefix from the annotation and the Bus type
 @EventBusSubscriber(modid = HorizonCore.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
 public class HorizonClientEvents {
 
     @SubscribeEvent
     public static void registerGuiLayers(@NotNull RegisterGuiLayersEvent event) {
-        // Registers our custom HUD overlay to render just above the hotbar layer
         event.registerAbove(VanillaGuiLayers.HOTBAR,
                 ResourceLocation.fromNamespaceAndPath(HorizonCore.MODID, "hud_overlay"),
                 HorizonHudOverlay::render);
     }
+
+    // Add this new event to register the keybind!
+    @SubscribeEvent
+    public static void registerKeybinds(RegisterKeyMappingsEvent event) {
+        event.register(HorizonKeybinds.SHOW_DETAILS);
+    }
+
+    // This is now safely inside the class!
+    @SubscribeEvent
+    public static void registerScreens(RegisterMenuScreensEvent event) {
+        event.register(com.horizonpack.horizoncore.core.HorizonRegistries.RESEARCH_BENCH_MENU.get(),
+                com.horizonpack.horizoncore.client.gui.ResearchBenchScreen::new);
+    }
+
 }

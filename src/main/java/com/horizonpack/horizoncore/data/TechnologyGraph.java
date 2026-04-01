@@ -52,6 +52,39 @@ public class TechnologyGraph {
     }
 
     private static void validateNoCycles() {
-        // Kahn's algorithm — omitted for brevity but prevents graph cycles
+        Map<ResourceLocation, Integer> inDegree = new HashMap<>();
+        Set<ResourceLocation> allNodes = new HashSet<>();
+
+        // Initialize degrees based on registered technologies
+        prerequisites.forEach((id, prereqs) -> {
+            allNodes.add(id);
+            inDegree.put(id, prereqs.size());
+            for (ResourceLocation p : prereqs) allNodes.add(p);
+        });
+
+        Queue<ResourceLocation> queue = new LinkedList<>();
+        inDegree.forEach((id, degree) -> {
+            if (degree == 0) queue.add(id);
+        });
+
+        int visitedCount = 0;
+        while (!queue.isEmpty()) {
+            ResourceLocation current = queue.poll();
+            visitedCount++;
+
+            List<ResourceLocation> neighbors = dependents.getOrDefault(current, List.of());
+            for (ResourceLocation neighbor : neighbors) {
+                inDegree.put(neighbor, inDegree.get(neighbor) - 1);
+                if (inDegree.get(neighbor) == 0) queue.add(neighbor);
+            }
+        }
+
+        if (visitedCount < prerequisites.size()) {
+            // Throw a warning or fatal error if the graph is broken
+            net.minecraft.server.MinecraftServer server = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
+            if (server != null) {
+                System.err.println("FATAL: Circular dependency detected in Technology Graph! Only " + visitedCount + "/" + prerequisites.size() + " nodes are reachable.");
+            }
+        }
     }
 }

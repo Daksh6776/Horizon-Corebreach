@@ -1,0 +1,15 @@
+{
+  "required_age": "stone_age",
+  "prerequisites": [],
+  "research_time_ticks": 6000,
+  "research_cost": [
+    { "item": "minecraft:flint", "count": 4 },
+    { "item": "minecraft:stick", "count": 2 }
+  ],
+  "effects": [
+    { "type": "unlock_recipe_category", "category": "horizoncraft:fire_tools" },
+    { "type": "unlock_block", "block": "horizoncraft:campfire_primitive" }
+  ],
+  "description": "horizoncore.tech.fire_making.desc",
+  "icon": "horizoncore:textures/tech/fire_making.png"
+}

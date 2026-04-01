@@ -1,36 +1,42 @@
 package com.horizonpack.horizoncore.data;
 
-import net.minecraft.util.StringRepresentable;
+public enum HorizonAge {
+    STONE_AGE(0, "Stone Age"),
+    COPPER_AGE(50, "Copper Age"),
+    BRONZE_AGE(200, "Bronze Age"),
+    IRON_AGE(500, "Iron Age"),
+    INDUSTRIAL(1500, "Industrial Era"),
+    MODERN_AGE(4000, "Modern Era");
 
-public enum HorizonAge implements StringRepresentable {
-    STONE_AGE       ("stone_age",   "Stone Age"),
-    COPPER_AGE      ("copper_age",  "Copper Age"),
-    BRONZE_AGE      ("bronze_age",  "Bronze Age"),
-    IRON_AGE        ("iron_age",    "Iron Age"),
-    MEDIEVAL        ("medieval",    "Medieval Era"),
-    INDUSTRIAL      ("industrial",  "Industrial Revolution"),
-    MODERN          ("modern",      "Modern Era");
+    private final int days;
+    private final String name;
 
-    private final String id;
-    private final String displayName;
-
-    HorizonAge(String id, String displayName) {
-        this.id       = id;
-        this.displayName = displayName;
+    HorizonAge(int days, String name) {
+        this.days = days;
+        this.name = name;
     }
 
-    /** True if this age is at least as advanced as the required age. */
-    public boolean isAtLeast(HorizonAge required) {
-        return this.ordinal() >= required.ordinal();
+    public int getRequiredDays() { return days; }
+    public String getDisplayName() { return name; }
+
+    public HorizonAge getNextAge() {
+        int next = this.ordinal() + 1;
+        return next < values().length ? values()[next] : this;
     }
 
-    /** True if this age is strictly before the given age. */
-    public boolean isBefore(HorizonAge other) {
-        return this.ordinal() < other.ordinal();
+    /**
+     * Checks if this age is equal to or further advanced than another.
+     */
+    public boolean isAtLeast(HorizonAge other) {
+        return this.ordinal() >= other.ordinal();
     }
 
-    public String getDisplayName(){ return displayName; }
-
-    @Override
-    public String getSerializedName() { return id; }
+    public static HorizonAge fromDay(int day) {
+        HorizonAge highest = STONE_AGE;
+        for (HorizonAge age : values()) {
+            if (day >= age.days) highest = age;
+            else break;
+        }
+        return highest;
+    }
 }

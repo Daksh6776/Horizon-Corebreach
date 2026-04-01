@@ -1,0 +1,19 @@
+{
+  "required_age": "stone_age",
+  "prerequisites": [],
+  "research_time_ticks": 2400,
+  "research_cost": [
+    {
+      "item": "minecraft:gravel",
+      "count": 4
+    }
+  ],
+  "effects": [
+    {
+      "type": "unlock_recipe_category",
+      "category": "horizoncore:flint_tools"
+    }
+  ],
+  "icon_path": "minecraft:textures/item/flint.png",
+  "description_key": "tech.horizoncore.flint_knapping.desc"
+}

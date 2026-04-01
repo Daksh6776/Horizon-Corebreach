@@ -33,6 +33,7 @@ public class HorizonCore {
         HorizonRegistries.BLOCK_ENTITIES.register(modEventBus);
         HorizonRegistries.ITEMS.register(modEventBus);
         HorizonRegistries.MENU_TYPES.register(modEventBus);
+        HorizonRegistries.CREATIVE_MODE_TABS.register(modEventBus);
 
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(HorizonCapabilities::register);

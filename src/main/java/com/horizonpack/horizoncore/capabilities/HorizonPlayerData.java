@@ -68,7 +68,6 @@ public class HorizonPlayerData implements IHorizonPlayerData {
     @Override public float getBodyTemperature() { return bodyTemperature; } @Override public void setBodyTemperature(float v) { bodyTemperature = v; }
     @Override public float getExhaustion() { return exhaustion; } @Override public void setExhaustion(float v) { exhaustion = v; }
     @Override public boolean isEnrolledAtUniversity() { return enrolledAtUniversity; } @Override public void setEnrolledAtUniversity(boolean v) { enrolledAtUniversity = v; }
-    @Override public String getCurrentApprenticeship() { return currentApprenticeship; } @Override public void setCurrentApprenticeship(String v) { currentApprenticeship = v; }
     @Override public Map<String, Float> getLanguageProficiency() { return languages; }
     @Override public float getLanguageProficiency(String lang) { return languages.getOrDefault(lang, 0f); }
 
@@ -108,6 +107,80 @@ public class HorizonPlayerData implements IHorizonPlayerData {
 
         unlockedTechs.clear();
         ListTag techList = tag.getList("Techs", Tag.TAG_STRING);
-        for(Tag t : techList) unlockedTechs.add(new ResourceLocation(t.getAsString()));
+        for(Tag t : techList) unlockedTechs.add(ResourceLocation.parse(t.getAsString()));
     }
+
+    private int intelligence = 1;
+    private int intelligenceXP = 0;
+
+    @Override
+    public int getIntelligence() { return this.intelligence; }
+
+    @Override
+    public void setIntelligence(int level) { this.intelligence = level; }
+
+    @Override
+    public int getIntelligenceXP() { return this.intelligenceXP; }
+
+    @Override
+    public void addIntelligenceXP(int amount) {
+        this.intelligenceXP += amount;
+
+        // Simple Leveling Logic: 100 XP per Level
+        // You can make this harder (e.g., level * 50) later
+        if (this.intelligenceXP >= 100) {
+            this.intelligence++;
+            this.intelligenceXP = 0;
+            // TODO: Send "Level Up" sound/message to player
+        }
+    }
+
+    private int apprenticeshipDays = 0;
+
+    public void tickApprenticeship() {
+        if (!currentApprenticeship.isEmpty()) {
+            apprenticeshipDays++;
+        }
+    }
+
+    private int apprenticeshipTicks = 0; // Tracks days served [cite: 222]
+
+
+    // Call this inside your tick() method
+    private void updateApprenticeship() {
+        if (!currentApprenticeship.isEmpty()) {
+        }
+    }
+
+    @Override
+    public String getCurrentApprenticeship() { return currentApprenticeship; }
+
+    @Override
+    public void setCurrentApprenticeship(String npcId) {
+        this.currentApprenticeship = npcId;
+    }
+
+    @Override
+    public int getApprenticeshipTicks() { return apprenticeshipTicks; }
+
+    @Override
+    public void setApprenticeshipTicks(int ticks) {
+    }
+
+    /**
+     * Logic: 1.5x for Apprentice (0-30 days), 2.0x for Journeyman (30-90), 2.5x for Master (90+)[cite: 222].
+     */
+    @Override
+    public float getSkillXpMultiplier() {
+        if (currentApprenticeship.isEmpty()) return 1.0f;
+        int days = apprenticeshipTicks / 24000;
+        if (days < 30) return 1.5f;
+        if (days < 90) return 2.0f;
+        return 2.5f;
+    }
+
+
+
+
+
 }

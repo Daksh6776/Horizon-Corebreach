@@ -1,12 +1,19 @@
 package com.horizonpack.horizoncore.network.packets;
+
 import com.horizonpack.horizoncore.HorizonCore;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
-public record TechUnlockPacket(ResourceLocation techId) implements net.minecraft.network.protocol.common.custom.CustomPacketPayload {
-    public static final Type<TechUnlockPacket> ID = new Type<>(new ResourceLocation(HorizonCore.MODID, "tech_unlock"));
-    public TechUnlockPacket(FriendlyByteBuf buf) { this(buf.readResourceLocation()); }
-    @Override public void write(FriendlyByteBuf buf) { buf.writeResourceLocation(techId); }
-    @Override public Type<? extends net.minecraft.network.protocol.common.custom.CustomPacketPayload> type() { return ID; }
-    public static void handleClient(TechUnlockPacket packet, IPayloadContext ctx) { /* Phase 6 */ }
+
+public record TechUnlockPacket(ResourceLocation techId) implements CustomPacketPayload {
+    public static final Type<TechUnlockPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonCore.MODID, "tech_unlock"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, TechUnlockPacket> STREAM_CODEC = StreamCodec.composite(
+            ResourceLocation.STREAM_CODEC, TechUnlockPacket::techId,
+            TechUnlockPacket::new
+    );
+
+    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    public static void handleClient(TechUnlockPacket payload, IPayloadContext ctx) { /* Phase 6 */ }
 }

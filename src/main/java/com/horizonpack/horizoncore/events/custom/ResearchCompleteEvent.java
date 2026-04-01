@@ -8,7 +8,6 @@ import net.neoforged.bus.api.Event;
 import net.neoforged.bus.api.ICancellableEvent;
 import org.jetbrains.annotations.Nullable;
 
-/** Fired when a ResearchBenchBlockEntity completes a project [cite: 312] */
 public class ResearchCompleteEvent extends Event implements ICancellableEvent {
     private final ServerLevel level;
     private final BlockPos benchPos;

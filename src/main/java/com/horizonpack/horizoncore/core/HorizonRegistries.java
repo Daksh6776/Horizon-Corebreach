@@ -7,6 +7,7 @@ import com.horizonpack.horizoncore.data.*;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -18,6 +19,9 @@ import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import com.horizonpack.horizoncore.HorizonCore;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.CreativeModeTabs;
 
 public class HorizonRegistries {
 
@@ -82,5 +86,47 @@ public class HorizonRegistries {
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<LaboratoryBlockEntity>> LABORATORY_BE =
             BLOCK_ENTITIES.register("laboratory", () -> BlockEntityType.Builder.of(LaboratoryBlockEntity::new, LABORATORY.get()).build(null));
 
+    // ── Menu Registrations ───────────────────────────────────────────────────
+
+    public static final DeferredHolder<MenuType<?>, MenuType<com.horizonpack.horizoncore.inventory.ResearchBenchMenu>> RESEARCH_BENCH_MENU =
+            MENU_TYPES.register("research_bench", () ->
+                    new MenuType<>(com.horizonpack.horizoncore.inventory.ResearchBenchMenu::new, net.minecraft.world.flag.FeatureFlags.DEFAULT_FLAGS));
+
+    public static final DeferredHolder<MenuType<?>, MenuType<?>> LIBRARY_MENU =
+            MENU_TYPES.register("library", () -> new MenuType<>(ChestMenu::sixRows, net.minecraft.world.flag.FeatureFlags.DEFAULT_FLAGS));
+
+
+    public static final DeferredHolder<MenuType<?>, MenuType<?>> UNIVERSITY_MENU =
+            MENU_TYPES.register("university", () -> new MenuType<>(ChestMenu::threeRows, net.minecraft.world.flag.FeatureFlags.DEFAULT_FLAGS));
+
+
+    public static final DeferredHolder<MenuType<?>, MenuType<?>> LABORATORY_MENU =
+            MENU_TYPES.register("laboratory", () -> new MenuType<>(ChestMenu::threeRows, net.minecraft.world.flag.FeatureFlags.DEFAULT_FLAGS));
+
+
+
+
+
+    // ── Creative Tab Registration ─────────────────────────────────────────────
+    public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
+            DeferredRegister.create(Registries.CREATIVE_MODE_TAB, HorizonCore.MODID);
+
+    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> HORIZON_TAB =
+            CREATIVE_MODE_TABS.register("horizon_core_tab", () -> CreativeModeTab.builder()
+                    .title(Component.literal("Horizon Core")) // The name of the tab in-game
+                    .withTabsBefore(CreativeModeTabs.SPAWN_EGGS)
+                    .icon(() -> RESEARCH_BENCH_ITEM.get().getDefaultInstance()) // The icon for the tab
+                    .displayItems((parameters, output) -> {
+                        // Add all your items here so they show up in the menu!
+                        output.accept(RESEARCH_BENCH_ITEM.get());
+                        output.accept(LIBRARY_ITEM.get());
+                        output.accept(UNIVERSITY_ITEM.get());
+                        output.accept(LABORATORY_ITEM.get());
+                        output.accept(TECH_SCROLL.get());
+                        output.accept(RESEARCH_NOTE.get());
+                        output.accept(SKILL_BOOK.get());
+                    }).build());
+
     public static void init() {}
+
 }

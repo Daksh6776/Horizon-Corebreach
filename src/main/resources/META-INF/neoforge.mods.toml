@@ -5,7 +5,7 @@ issueTrackerURL="https://github.com/Daksh146/Horizon-Corebreach/issues"
 
 [[mods]]
 modId="horizoncore"
-version="${version}" # This should be replaced by your Gradle build script
+version="1.0.0" # This should be replaced by your Gradle build script
 displayName="Horizon Core"
 authors="Daksh146"
 description='''
@@ -16,7 +16,7 @@ Provides the foundational API and core mechanics for all other Horizon modules.
 [[dependencies.horizoncore]]
 modId="neoforge"
 type="required"
-versionRange="[21.0.167,)"
+versionRange="[21.1.65,)"
 ordering="NONE"
 side="BOTH"
 
