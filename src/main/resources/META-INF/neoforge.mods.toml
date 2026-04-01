@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="All Rights Reserved"
+issueTrackerURL="https://github.com/Daksh146/Horizon-Corebreach/issues"
+
+[[mods]]
+modId="horizoncore"
+version="${version}" # This should be replaced by your Gradle build script
+displayName="Horizon Core"
+authors="Daksh146"
+description='''
+Core systems and age progression for the Horizon Corebreach modpack.
+Provides the foundational API and core mechanics for all other Horizon modules.
+'''
+
+[[dependencies.horizoncore]]
+modId="neoforge"
+type="required"
+versionRange="[21.0.167,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.horizoncore]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1,1.22)"
+ordering="NONE"
+side="BOTH"
