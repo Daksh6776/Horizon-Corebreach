@@ -1,33 +1,52 @@
 package com.horizonpack.horizoncore.voice;
 
-import com.horizonpack.horizoncore.data.HorizonAge;
+import de.maxhenkel.voicechat.api.ForgeVoicechatPlugin;
+import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatPlugin;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
 import de.maxhenkel.voicechat.api.events.EventRegistration;
 import de.maxhenkel.voicechat.api.events.VoicechatServerStartedEvent;
 import net.minecraft.server.level.ServerPlayer;
-import org.jetbrains.annotations.Nullable;
+import com.horizonpack.horizoncore.data.HorizonAge; // Or wherever your HorizonAge is located
 
+@ForgeVoicechatPlugin
 public class HorizonVoicePlugin implements VoicechatPlugin {
 
-    @Nullable
-    public static VoicechatServerApi voiceApi;
+    public static VoicechatApi VOICECHAT_API;
+    public static VoicechatServerApi VOICECHAT_SERVER_API;
 
     @Override
-    public String getPluginId() { return "horizoncore"; }
+    public String getPluginId() {
+        return "horizoncore_voicechat";
+    }
+
+    @Override
+    public void initialize(VoicechatApi api) {
+        VOICECHAT_API = api;
+    }
 
     @Override
     public void registerEvents(EventRegistration registration) {
-        registration.registerEvent(VoicechatServerStartedEvent.class, event -> {
-            voiceApi = event.getVoicechat();
-        });
+        registration.registerEvent(VoicechatServerStartedEvent.class, this::onServerStarted);
     }
 
-    public static void updatePlayerVoice(ServerPlayer player, HorizonAge age) {
-        if (voiceApi == null) return;
-
-        // In SVC 2.4.0, per-player distance isn't standard.
-        // We will control voice via Groups instead (e.g., locking Stone Age players out of global radios).
-        // This stops the compilation error while keeping the plugin active.
+    private void onServerStarted(VoicechatServerStartedEvent event) {
+        VOICECHAT_SERVER_API = event.getVoicechat();
     }
-}
+
+    /**
+     * Called from ModEvents.java to update a player's voice range/settings based on the civilization age.
+     */
+    public static void updatePlayerVoice(ServerPlayer player, HorizonAge age) { { // Change 'int' to your HorizonAge enum if needed
+        // 1. Safety check: Ensure the server API is actually loaded before doing anything
+        if (VOICECHAT_SERVER_API == null) return;
+
+        // 2. We can grab the player's active voice connection (returns null if they don't have the mod installed)
+        var connection = VOICECHAT_SERVER_API.getConnectionOf(player.getUUID());
+
+        if (connection != null) {
+            // Your logic here to alter their voice based on the Age!
+            // For example, broadcasting a packet to nearby players, or modifying group distances.
+        }
+    }
+}}

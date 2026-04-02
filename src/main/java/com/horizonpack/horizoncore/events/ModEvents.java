@@ -66,7 +66,6 @@ public class ModEvents {
         level.setDayTime(newDay * 24000L);
     }
 
-    @SubscribeEvent
 
 
     // CONCEPT: Hooking into Simple Voice Chat API

@@ -1,0 +1,21 @@
+{
+  "description": "horizoncore.tech.primitive_pottery.desc",
+  "effects": [
+    {
+      "type": "unlock_block",
+      "block": "horizoncraft:primitive_kiln"
+    }
+  ],
+  "icon": "horizoncore:textures/tech/primitive_pottery.png",
+  "prerequisites": [
+    "horizoncore:fire_making"
+  ],
+  "required_age": "stone_age",
+  "research_cost": [
+    {
+      "count": 16,
+      "item": "minecraft:clay_ball"
+    }
+  ],
+  "research_time_ticks": 8000
+}

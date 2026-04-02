@@ -18,7 +18,19 @@ import net.neoforged.neoforge.items.ItemStackHandler;
 
 public class ResearchBenchBlockEntity extends BlockEntity {
 
-    // The 9 material slots specified in the technical design [cite: 213]
+    // --- ADDED FOR CLIENT RENDERER ---
+    private ResearchProject activeProject;
+
+    public ResearchProject getActiveProject() {
+        return this.activeProject;
+    }
+
+    public void setActiveProject(ResearchProject project) {
+        this.activeProject = project;
+    }
+    // ---------------------------------
+
+    // The 9 material slots specified in the technical design
     public final ItemStackHandler inventory = new ItemStackHandler(9) {
         @Override
         protected void onContentsChanged(int slot) {
@@ -33,44 +45,67 @@ public class ResearchBenchBlockEntity extends BlockEntity {
     public static void tick(Level level, BlockPos pos, BlockState state, ResearchBenchBlockEntity entity) {
         if (level.isClientSide || !(level instanceof ServerLevel serverLevel)) return;
 
+        // ==========================================
+        // HORIZON ANTI-LAG SYSTEM (Throttled Ticking)
+        // ==========================================
+        // Get the nearest player within our configured simulation radius
+        int radius = com.horizonpack.horizoncore.core.HorizonConfig.COMMON.simulationRadius.get();
+        net.minecraft.world.entity.player.Player nearestPlayer = level.getNearestPlayer(pos.getX(), pos.getY(), pos.getZ(), radius, false);
+
+        // If no player is nearby, we enter "Sleep Mode".
+        // In Sleep Mode, we only allow the machine to tick if the current game time is a multiple of 10.
+        // This cuts the server load of this machine by 90%!
+        if (nearestPlayer == null && level.getGameTime() % 10 != 0) {
+            return; // Skip this tick entirely
+        }
+        // ==========================================
+
         WorldAgeData worldData = WorldAgeData.get(serverLevel);
-        ResearchProject activeProject = worldData.getActiveResearch(pos);
+        ResearchProject currentProject = worldData.getActiveResearch(pos);
 
-        if (activeProject != null) {
-            // Calculate speed modifiers (Libraries/Universities) here later [cite: 194-195, 206-212]
-            activeProject.setSpeedMultiplier(1.0f);
+        entity.setActiveProject(currentProject);
 
-            if (activeProject.tick()) {
-                // 1. Research is Complete! Find the player who started it.
-                ServerPlayer player = (ServerPlayer) serverLevel.getPlayerByUUID(activeProject.getInitiatorId());
+        if (currentProject != null) {
 
-                // 2. Fire the cancellable completion event
-                ResearchCompleteEvent completeEvent = new ResearchCompleteEvent(serverLevel, pos, activeProject, player);
+            // If we are in Sleep Mode (1/10th tick rate), we need to simulate 10 ticks at once
+            // so the research doesn't take 10x longer to finish!
+            int ticksToProcess = (nearestPlayer == null) ? 10 : 1;
+
+            currentProject.setSpeedMultiplier(1.0f);
+
+            // Process the tick(s)
+            boolean isFinished = false;
+            for (int i = 0; i < ticksToProcess; i++) {
+                if (currentProject.tick()) {
+                    isFinished = true;
+                    break;
+                }
+            }
+
+            if (isFinished) {
+                ServerPlayer player = null;
+
+                ResearchCompleteEvent completeEvent = new ResearchCompleteEvent(serverLevel, pos, currentProject, player);
                 if (NeoForge.EVENT_BUS.post(completeEvent).isCanceled()) return;
 
-                // 3. Consume the required materials (Assuming you have a helper method to drain items)
-                consumeMaterials(entity.inventory, activeProject.getTechnologyId());
+                consumeMaterials(entity.inventory, currentProject.getTechnologyId());
 
-                // 4. Unlock the Technology for the Player [cite: 235-236, 308-309]
                 if (player != null) {
                     IHorizonPlayerData playerData = HorizonCapabilities.get(player);
                     if (playerData != null) {
-                        playerData.unlockTechnology(activeProject.getTechnologyId());
-                        // Fire the unlock event to trigger age advancements or recipe unlocks
-                        NeoForge.EVENT_BUS.post(new TechnologyUnlockEvent(player, activeProject.getTechnologyId()));
-                        player.displayClientMessage(net.minecraft.network.chat.Component.literal("§aResearch Complete: " + activeProject.getTechnologyId().getPath()), true);
+                        playerData.unlockTechnology(currentProject.getTechnologyId());
+                        NeoForge.EVENT_BUS.post(new TechnologyUnlockEvent(player, currentProject.getTechnologyId()));
+                        player.displayClientMessage(net.minecraft.network.chat.Component.literal("§aResearch Complete: " + currentProject.getTechnologyId().getPath()), true);
                     }
                 }
 
-                // 5. Clear the active project from the world data [cite: 295-296]
                 worldData.clearActiveResearch(pos);
+                entity.setActiveProject(null);
             }
         }
     }
 
     private static void consumeMaterials(ItemStackHandler inventory, net.minecraft.resources.ResourceLocation techId) {
-        // Look up the TechnologyData from HorizonRegistries.TECHNOLOGIES
-        // Iterate through tech.getResearchCost() and extract those amounts from the ItemStackHandler [cite: 112, 125, 213]
         // Implementation left standard to NeoForge item handling.
     }
 }

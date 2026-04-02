@@ -3,7 +3,7 @@ package com.horizonpack.horizoncore.events;
 import com.horizonpack.horizoncore.HorizonCore;
 import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
 import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
-import com.horizonpack.horizoncore.util.MultiblockValidator;
+import com.horizonpack.horizoncore.utils.MultiblockValidator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.Blocks;

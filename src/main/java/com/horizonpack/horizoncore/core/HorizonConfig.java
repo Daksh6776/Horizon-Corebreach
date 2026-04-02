@@ -22,10 +22,10 @@ public class HorizonConfig {
 
     public static class Common {
         // World
-        public final ModConfigSpec.IntValue    continentCount;
+        public final ModConfigSpec.IntValue continentCount;
 
         // Progression
-        public final ModConfigSpec.IntValue    daysPerAgeMultiplier;
+        public final ModConfigSpec.IntValue daysPerAgeMultiplier;
         public final ModConfigSpec.BooleanValue enableAgeRestrictions;
         public final ModConfigSpec.BooleanValue civilizationsCanAdvanceIndependently;
 
@@ -75,8 +75,9 @@ public class HorizonConfig {
             b.pop();
 
             b.push("performance");
-            simulationRadius = b.comment("Chunk radius for full simulation (1–32)")
-                    .defineInRange("simulationRadius", 8, 1, 32);
+            // CHANGED to Blocks (128 blocks = 8 chunks) so it perfectly matches the Anti-Lag math!
+            simulationRadius = b.comment("Block radius for full machine simulation. Outside this, machines run at 1/10th speed (16–512)")
+                    .defineInRange("simulationRadius", 128, 16, 512);
             maxActiveNPCs    = b.comment("Maximum simultaneously active NPCs")
                     .defineInRange("maxActiveNPCs", 1000, 100, 10000);
             b.pop();
@@ -88,7 +89,7 @@ public class HorizonConfig {
         public final ModConfigSpec.BooleanValue showTemperatureHUD;
         public final ModConfigSpec.BooleanValue showAgeNotification;
         public final ModConfigSpec.BooleanValue showSkillXPToasts;
-        public final ModConfigSpec.IntValue     hudScale;
+        public final ModConfigSpec.IntValue hudScale;
 
         Client(ModConfigSpec.Builder b) {
             b.push("hud");

@@ -22,6 +22,9 @@ import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
+import net.neoforged.neoforge.common.conditions.ICondition;
+import com.mojang.serialization.MapCodec;
+
 
 public class HorizonRegistries {
 
@@ -128,5 +131,14 @@ public class HorizonRegistries {
                     }).build());
 
     public static void init() {}
+    // Add this to your imports:
 
+
+    // Add this alongside your other public static final DeferredRegister fields:
+    public static final DeferredRegister<MapCodec<? extends ICondition>> CONDITION_CODECS =
+            DeferredRegister.create(net.neoforged.neoforge.registries.NeoForgeRegistries.Keys.CONDITION_CODECS, HorizonCore.MODID);
+
+    // Add this below your item/block registrations:
+    public static final java.util.function.Supplier<MapCodec<com.horizonpack.horizoncore.utils.AgeRecipeCondition>> AGE_CONDITION =
+            CONDITION_CODECS.register("age_condition", () -> com.horizonpack.horizoncore.utils.AgeRecipeCondition.CODEC);
 }

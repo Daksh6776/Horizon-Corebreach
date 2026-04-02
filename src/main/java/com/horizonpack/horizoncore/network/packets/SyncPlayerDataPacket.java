@@ -4,6 +4,7 @@ import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
 import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
 import com.horizonpack.horizoncore.HorizonCore;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
@@ -17,6 +18,8 @@ public record SyncPlayerDataPacket(CompoundTag playerData) implements CustomPack
     public static final StreamCodec<RegistryFriendlyByteBuf, SyncPlayerDataPacket> STREAM_CODEC = StreamCodec.composite(
             ByteBufCodecs.COMPOUND_TAG, SyncPlayerDataPacket::playerData,
             SyncPlayerDataPacket::new
+
+
     );
 
     @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
@@ -30,4 +33,8 @@ public record SyncPlayerDataPacket(CompoundTag playerData) implements CustomPack
             }
         });
     }
+
+
+
+
 }

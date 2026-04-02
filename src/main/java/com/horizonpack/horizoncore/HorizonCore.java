@@ -1,4 +1,4 @@
-package com.horizonpack.horizoncore; // Fixed package name
+package com.horizonpack.horizoncore;
 
 import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
 import com.horizonpack.horizoncore.core.HorizonConfig;
@@ -18,6 +18,7 @@ public class HorizonCore {
     public static final String MODID = "horizoncore";
 
     public HorizonCore(IEventBus modEventBus, ModContainer modContainer) {
+        // Register the configs so the simulationRadius and other settings appear in /config
         modContainer.registerConfig(ModConfig.Type.COMMON, HorizonConfig.COMMON_SPEC);
         modContainer.registerConfig(ModConfig.Type.CLIENT, HorizonConfig.CLIENT_SPEC);
 
@@ -35,16 +36,22 @@ public class HorizonCore {
         HorizonRegistries.MENU_TYPES.register(modEventBus);
         HorizonRegistries.CREATIVE_MODE_TABS.register(modEventBus);
 
+        // Register the Age Condition registry for the recipe gating system
+        HorizonRegistries.CONDITION_CODECS.register(modEventBus);
+
+        // Mod bus listeners
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(HorizonCapabilities::register);
         modEventBus.addListener(HorizonPacketHandler::register);
 
+        // Forge bus listeners
         NeoForge.EVENT_BUS.register(HorizonEventHandlers.class);
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
             HorizonRegistries.init();
+            // Build the technology hierarchy once everything is registered
             TechnologyGraph.buildGraph();
         });
     }

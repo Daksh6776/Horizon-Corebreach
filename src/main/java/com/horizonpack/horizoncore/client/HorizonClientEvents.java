@@ -12,6 +12,11 @@ import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import org.jetbrains.annotations.NotNull;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
+import com.horizonpack.horizoncore.core.HorizonRegistries;
+import com.horizonpack.horizoncore.client.render.HorizonBlockEntityRenderer;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+
 
 @EventBusSubscriber(modid = HorizonCore.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
 public class HorizonClientEvents {
@@ -36,4 +41,8 @@ public class HorizonClientEvents {
                 com.horizonpack.horizoncore.client.gui.ResearchBenchScreen::new);
     }
 
+    @SubscribeEvent
+    public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
+        event.registerBlockEntityRenderer(HorizonRegistries.RESEARCH_BENCH_BE.get(), HorizonBlockEntityRenderer::new);
+    }
 }
