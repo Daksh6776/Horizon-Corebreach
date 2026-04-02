@@ -1,0 +1,11 @@
+﻿{
+  "fuel_id": "lignite_coal",
+  "type": "SOLID",
+  "heat_kj": 10000,
+  "burn_duration_ticks": 800,
+  "max_temperature_celsius": 600,
+  "pollution": "HIGH",
+  "age_unlock": "STONE_AGE",
+  "requires_storage": false,
+  "is_explosive": false
+}

@@ -1,0 +1,11 @@
+﻿{
+  "fuel_id": "diesel_bucket",
+  "type": "LIQUID",
+  "heat_kj": 45000,
+  "burn_duration_ticks": 4000,
+  "max_temperature_celsius": 2000,
+  "pollution": "HIGH",
+  "age_unlock": "INDUSTRIAL_AGE",
+  "requires_storage": true,
+  "is_explosive": false
+}

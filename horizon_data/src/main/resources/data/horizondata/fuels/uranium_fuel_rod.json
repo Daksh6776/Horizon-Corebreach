@@ -1,0 +1,11 @@
+﻿{
+  "fuel_id": "uranium_fuel_rod",
+  "type": "NUCLEAR",
+  "heat_kj": 10000000,
+  "burn_duration_ticks": 1000000,
+  "max_temperature_celsius": 3500,
+  "pollution": "RADIATION",
+  "age_unlock": "MODERN_AGE",
+  "requires_storage": false,
+  "is_explosive": false
+}

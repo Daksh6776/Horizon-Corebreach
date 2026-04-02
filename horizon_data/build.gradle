@@ -1,0 +1,60 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizondata'
+base { archivesName = 'horizondata' }
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+    maven { name = "NeoForged"; url = "https://maven.neoforged.net/releases" }
+    maven { name = "Max Henkel"; url = "https://maven.maxhenkel.de/repository/public" }
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
+}
+
+// ... (rest of your build.gradle) ...
+
+dependencies {
+    // API is always needed for compilation
+    compileOnly "de.maxhenkel.voicechat:voicechat-api:2.5.0"
+    implementation project(':horizon_core')
+    // THE CONDITIONAL FIX:
+    // Only load the actual mod JAR if we are NOT running a DataGen task.
+    // This prevents the mod from loading and crashing in headless mode.
+    if (!gradle.startParameter.taskNames.any { it.contains("Data") }) {
+        runtimeOnly "maven.modrinth:simple-voice-chat:neoforge-1.21.1-2.5.21"
+    }
+}
+
+// Ensure you REMOVE the client { dependencies { ... } } block we tried earlier
+// to avoid conflicts.
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+neoForge {
+    version = "21.1.65"
+    mods {
+        horizondata { sourceSet project.sourceSets.main }
+    }
+    runs {
+        client { client() }
+        server { server() }
+        data {
+            data()
+            programArguments.addAll([
+                    '--mod', 'horizondata',
+                    '--all',
+                    '--output', file('src/generated/resources/').getAbsolutePath(),
+                    '--existing', file('src/main/resources/').getAbsolutePath()
+            ])
+        }
+    }
+}
