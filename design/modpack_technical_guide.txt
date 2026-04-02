@@ -1,0 +1,1147 @@
+# TECHNICAL IMPLEMENTATION GUIDE
+## NeoForge 1.21.1 - Complete Developer Reference
+
+---
+
+## TABLE OF CONTENTS
+1. [Architecture Overview](#architecture-overview)
+2. [HorizonCore - Central API](#horizoncore-api)
+3. [Data Structures](#data-structures)
+4. [Event System](#event-system)
+5. [World Generation](#world-generation)
+6. [Entity Systems](#entity-systems)
+7. [Capability System](#capability-system)
+8. [Network Packets](#network-packets)
+9. [Data Persistence](#data-persistence)
+10. [Recipe System](#recipe-system)
+11. [Performance Optimization](#performance-optimization)
+12. [Configuration](#configuration)
+
+---
+
+## ARCHITECTURE OVERVIEW
+
+### Target Platform
+- **Minecraft Version:** 1.21.1
+- **Mod Loader:** NeoForge (latest stable)
+- **Java Version:** 21+
+- **Build System:** Gradle 8.0+
+
+### Mod Structure Philosophy
+This modpack uses a **microservices-inspired architecture**:
+1. **HorizonCore** = Central event bus + data registry
+2. Each mod is **loosely coupled** but **highly cohesive**
+3. Communication via **events**, **capabilities**, **data providers**
+4. Mods function independently but enhance each other when present
+
+### Standard File Structure (Per Mod)
+```
+horizon_<modname>/
+├── src/main/java/com/horizonpack/<modname>/
+│   ├── core/
+│   │   ├── <ModName>.java                 // @Mod class
+│   │   ├── Config.java                     // ForgeConfigSpec
+│   │   └── Registry.java                   // DeferredRegister holders
+│   ├── events/
+│   │   ├── <ModName>Events.java           // Event handlers
+│   │   └── custom/                         // Custom Event classes
+│   ├── network/
+│   │   ├── PacketHandler.java             // SimpleChannel setup
+│   │   └── packets/                        // Packet classes
+│   ├── blocks/                             // Block implementations
+│   ├── items/                              // Item implementations
+│   ├── entities/                           // Entity classes
+│   ├── blockentities/                      // BlockEntity classes
+│   ├── worldgen/                           // World generation
+│   ├── capabilities/                       // Capability interfaces
+│   ├── data/                               // SavedData implementations
+│   ├── ai/                                 // AI Goal/Behavior classes
+│   ├── client/                             // Client-only code
+│   │   ├── gui/                            // Screens & overlays
+│   │   └── render/                         // Renderers
+│   └── utils/                              // Helper classes
+├── src/main/resources/
+│   ├── META-INF/
+│   │   └── neoforge.mods.toml             // Mod metadata
+│   ├── data/<modid>/
+│   │   ├── recipes/                        // Recipe JSONs
+│   │   ├── loot_tables/                    // Loot table JSONs
+│   │   ├── tags/                           // Tag JSONs
+│   │   ├── advancements/                   // Advancement JSONs
+│   │   └── worldgen/                       // Worldgen feature JSONs
+│   └── assets/<modid>/
+│       ├── blockstates/                    // Blockstate JSONs
+│       ├── models/
+│       │   ├── block/                      // Block models
+│       │   └── item/                       // Item models
+│       ├── textures/
+│       │   ├── block/                      // Block textures
+│       │   ├── item/                       // Item textures
+│       │   └── entity/                     // Entity textures
+│       ├── lang/                           // Localization
+│       │   └── en_us.json
+│       └── sounds.json                     // Sound definitions
+└── build.gradle                            // Dependencies & build config
+```
+
+---
+
+## horizoncore API
+
+### Main Mod Class
+
+```java
+package com.horizonpack.horizoncore.core;
+
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonCore.MODID)
+public class HorizonCore {
+    public static final String MODID = "horizoncore";
+    
+    public HorizonCore(IEventBus modEventBus, ModContainer modContainer) {
+        // Register config
+        modContainer.registerConfig(ModConfig.Type.COMMON, HorizonConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, HorizonConfig.CLIENT_SPEC);
+        
+        // Register deferred registers
+        HorizonRegistries.TECHNOLOGIES.register(modEventBus);
+        HorizonRegistries.PROFESSIONS.register(modEventBus);
+        HorizonRegistries.SKILLS.register(modEventBus);
+        HorizonRegistries.DISEASES.register(modEventBus);
+        HorizonRegistries.WEATHER_TYPES.register(modEventBus);
+        HorizonRegistries.DISASTERS.register(modEventBus);
+        HorizonRegistries.NUTRIENTS.register(modEventBus);
+        
+        // Setup event listeners
+        modEventBus.addListener(this::commonSetup);
+        
+        // Register capabilities
+        modEventBus.addListener(HorizonCapabilities::register);
+        
+        // Register packet handler
+        modEventBus.addListener(HorizonPacketHandler::register);
+    }
+    
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            // Post-registration setup
+            HorizonRegistries.init();
+        });
+    }
+}
+```
+
+### Custom Registries
+
+```java
+package com.horizonpack.horizoncore.core;
+
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class HorizonRegistries {
+    
+    // Create custom registry keys
+    public static final ResourceKey<Registry<TechnologyData>> TECHNOLOGY_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "technologies"));
+    
+    public static final ResourceKey<Registry<Profession>> PROFESSION_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "professions"));
+    
+    public static final ResourceKey<Registry<SkillType>> SKILL_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "skills"));
+    
+    public static final ResourceKey<Registry<DiseaseType>> DISEASE_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "diseases"));
+    
+    public static final ResourceKey<Registry<WeatherType>> WEATHER_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "weather"));
+    
+    public static final ResourceKey<Registry<DisasterType>> DISASTER_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "disasters"));
+    
+    public static final ResourceKey<Registry<NutrientType>> NUTRIENT_REGISTRY_KEY = 
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "nutrients"));
+    
+    // Deferred registers
+    public static final DeferredRegister<TechnologyData> TECHNOLOGIES = 
+        DeferredRegister.create(TECHNOLOGY_REGISTRY_KEY, HorizonCore.MODID);
+    
+    public static final DeferredRegister<Profession> PROFESSIONS = 
+        DeferredRegister.create(PROFESSION_REGISTRY_KEY, HorizonCore.MODID);
+    
+    public static final DeferredRegister<SkillType> SKILLS = 
+        DeferredRegister.create(SKILL_REGISTRY_KEY, HorizonCore.MODID);
+    
+    public static final DeferredRegister<DiseaseType> DISEASES = 
+        DeferredRegister.create(DISEASE_REGISTRY_KEY, HorizonCore.MODID);
+    
+    public static final DeferredRegister<WeatherType> WEATHER_TYPES = 
+        DeferredRegister.create(WEATHER_REGISTRY_KEY, HorizonCore.MODID);
+    
+    public static final DeferredRegister<DisasterType> DISASTERS = 
+        DeferredRegister.create(DISASTER_REGISTRY_KEY, HorizonCore.MODID);
+    
+    public static final DeferredRegister<NutrientType> NUTRIENTS = 
+        DeferredRegister.create(NUTRIENT_REGISTRY_KEY, HorizonCore.MODID);
+    
+    // Registry instances (created during common setup)
+    public static Registry<TechnologyData> TECHNOLOGY_REGISTRY;
+    public static Registry<Profession> PROFESSION_REGISTRY;
+    public static Registry<SkillType> SKILL_REGISTRY;
+    public static Registry<DiseaseType> DISEASE_REGISTRY;
+    public static Registry<WeatherType> WEATHER_REGISTRY;
+    public static Registry<DisasterType> DISASTER_REGISTRY;
+    public static Registry<NutrientType> NUTRIENT_REGISTRY;
+    
+    public static void init() {
+        // Initialize registry access
+        // Registries are now available via BuiltInRegistries or custom holders
+    }
+}
+```
+
+---
+
+## DATA STRUCTURES
+
+### Age/Era System
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.util.StringRepresentable;
+
+public enum HorizonAge implements StringRepresentable {
+    STONE_AGE(0, 5000, "stone_age", "Stone Age"),
+    COPPER_AGE(5000, 10000, "copper_age", "Copper Age"),
+    BRONZE_AGE(10000, 15000, "bronze_age", "Bronze Age"),
+    IRON_AGE(15000, 30000, "iron_age", "Iron Age"),
+    MEDIEVAL(30000, 50000, "medieval", "Medieval Era"),
+    INDUSTRIAL(50000, 75000, "industrial", "Industrial Revolution"),
+    MODERN(75000, Integer.MAX_VALUE, "modern", "Modern Era");
+    
+    private final int startDay;
+    private final int endDay;
+    private final String id;
+    private final String displayName;
+    
+    HorizonAge(int startDay, int endDay, String id, String displayName) {
+        this.startDay = startDay;
+        this.endDay = endDay;
+        this.id = id;
+        this.displayName = displayName;
+    }
+    
+    public static HorizonAge fromDay(int day) {
+        for (HorizonAge age : values()) {
+            if (day >= age.startDay && day < age.endDay) {
+                return age;
+            }
+        }
+        return MODERN;
+    }
+    
+    public boolean isAtLeast(HorizonAge required) {
+        return this.ordinal() >= required.ordinal();
+    }
+    
+    public int getStartDay() { return startDay; }
+    public int getEndDay() { return endDay; }
+    public String getDisplayName() { return displayName; }
+    
+    @Override
+    public String getSerializedName() {
+        return id;
+    }
+}
+```
+
+### World Age Data (SavedData)
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class WorldAgeData extends SavedData {
+    private static final String DATA_NAME = "terra_world_age";
+    
+    private int currentDay = 0;
+    private HorizonAge globalAge = HorizonAge.STONE_AGE;
+    private Map<BlockPos, Integer> settlementAges = new HashMap<>();
+    private Map<UUID, Integer> civilizationDays = new HashMap<>();
+    
+    public WorldAgeData() {}
+    
+    public static WorldAgeData load(CompoundTag tag) {
+        WorldAgeData data = new WorldAgeData();
+        data.currentDay = tag.getInt("CurrentDay");
+        data.globalAge = HorizonAge.values()[tag.getInt("GlobalAge")];
+        
+        // Load settlement ages
+        ListTag settlements = tag.getList("Settlements", Tag.TAG_COMPOUND);
+        for (Tag t : settlements) {
+            CompoundTag settlementTag = (CompoundTag) t;
+            BlockPos pos = BlockPos.of(settlementTag.getLong("Pos"));
+            int age = settlementTag.getInt("Age");
+            data.settlementAges.put(pos, age);
+        }
+        
+        // Load civilization days
+        ListTag civs = tag.getList("Civilizations", Tag.TAG_COMPOUND);
+        for (Tag t : civs) {
+            CompoundTag civTag = (CompoundTag) t;
+            UUID id = civTag.getUUID("UUID");
+            int days = civTag.getInt("Days");
+            data.civilizationDays.put(id, days);
+        }
+        
+        return data;
+    }
+    
+    @Override
+    public @NotNull CompoundTag save(@NotNull CompoundTag tag) {
+        tag.putInt("CurrentDay", currentDay);
+        tag.putInt("GlobalAge", globalAge.ordinal());
+        
+        // Save settlement ages
+        ListTag settlements = new ListTag();
+        settlementAges.forEach((pos, age) -> {
+            CompoundTag settlementTag = new CompoundTag();
+            settlementTag.putLong("Pos", pos.asLong());
+            settlementTag.putInt("Age", age);
+            settlements.add(settlementTag);
+        });
+        tag.put("Settlements", settlements);
+        
+        // Save civilization days
+        ListTag civs = new ListTag();
+        civilizationDays.forEach((id, days) -> {
+            CompoundTag civTag = new CompoundTag();
+            civTag.putUUID("UUID", id);
+            civTag.putInt("Days", days);
+            civs.add(civTag);
+        });
+        tag.put("Civilizations", civs);
+        
+        return tag;
+    }
+    
+    public void advanceDay() {
+        currentDay++;
+        HorizonAge newAge = HorizonAge.fromDay(currentDay);
+        if (newAge != globalAge) {
+            globalAge = newAge;
+            setDirty();
+        }
+        setDirty();
+    }
+    
+    public HorizonAge getGlobalAge() {
+        return globalAge;
+    }
+    
+    public int getCurrentDay() {
+        return currentDay;
+    }
+    
+    public HorizonAge getSettlementAge(BlockPos pos) {
+        Integer days = settlementAges.get(pos);
+        if (days == null) return globalAge;
+        return HorizonAge.fromDay(days);
+    }
+    
+    public void setSettlementAge(BlockPos pos, int days) {
+        settlementAges.put(pos, days);
+        setDirty();
+    }
+    
+    public void advanceCivilization(UUID civId) {
+        civilizationDays.merge(civId, 1, Integer::sum);
+        setDirty();
+    }
+    
+    public int getCivilizationDays(UUID civId) {
+        return civilizationDays.getOrDefault(civId, 0);
+    }
+    
+    public static WorldAgeData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+            new SavedData.Factory<>(WorldAgeData::new, WorldAgeData::load),
+            DATA_NAME
+        );
+    }
+}
+```
+
+---
+
+## CAPABILITY SYSTEM
+
+### Player Capability Interface
+
+```java
+package com.horizonpack.horizoncore.capabilities;
+
+import com.horizonpack.horizoncore.data.NutrientType;
+import com.horizonpack.horizoncore.data.SkillType;
+import com.horizonpack.horizoncore.data.VitaminType;
+import com.horizonpack.horizoncore.data.MineralType;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+import java.util.Map;
+import java.util.Set;
+
+public interface IHorizonPlayerData extends INBTSerializable<CompoundTag> {
+    
+    // === NUTRITION ===
+    float getProtein();
+    void setProtein(float value);
+    
+    float getCarbohydrates();
+    void setCarbohydrates(float value);
+    
+    float getFats();
+    void setFats(float value);
+    
+    float getCalories();
+    void setCalories(float value);
+    
+    float getHydration();
+    void setHydration(float value);
+    
+    Map<VitaminType, Float> getVitamins();
+    float getVitamin(VitaminType type);
+    void setVitamin(VitaminType type, float value);
+    
+    Map<MineralType, Float> getMinerals();
+    float getMineral(MineralType type);
+    void setMineral(MineralType type, float value);
+    
+    void addNutrient(NutrientType type, float amount);
+    void consumeNutrients(float deltaTime);
+    
+    // === SKILLS ===
+    Map<SkillType, Integer> getSkills();
+    int getSkillLevel(SkillType skill);
+    int getSkillXP(SkillType skill);
+    void addSkillXP(SkillType skill, int xp);
+    void setSkillLevel(SkillType skill, int level);
+    
+    // === TECHNOLOGY ===
+    Set<ResourceLocation> getUnlockedTechnologies();
+    boolean hasTechnology(ResourceLocation techId);
+    void unlockTechnology(ResourceLocation techId);
+    
+    // === STATUS ===
+    float getBodyTemperature();
+    void setBodyTemperature(float temp);
+    
+    // === LANGUAGE ===
+    Map<String, Float> getLanguageProficiency();
+    float getLanguageProficiency(String languageId);
+    void improveLanguage(String languageId, float amount);
+    
+    // === UTILITIES ===
+    void tick();
+    void copyFrom(IHorizonPlayerData other);
+}
+```
+
+### Player Capability Implementation
+
+```java
+package com.horizonpack.horizoncore.capabilities;
+
+import com.horizonpack.horizoncore.data.*;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
+
+import java.util.*;
+
+public class HorizonPlayerData implements IHorizonPlayerData {
+    
+    // Macronutrients
+    private float protein = 50.0f;
+    private float carbohydrates = 50.0f;
+    private float fats = 50.0f;
+    private float calories = 2000.0f;
+    private float hydration = 100.0f;
+    
+    // Micronutrients
+    private final EnumMap<VitaminType, Float> vitamins = new EnumMap<>(VitaminType.class);
+    private final EnumMap<MineralType, Float> minerals = new EnumMap<>(MineralType.class);
+    
+    // Skills
+    private final EnumMap<SkillType, Integer> skillLevels = new EnumMap<>(SkillType.class);
+    private final EnumMap<SkillType, Integer> skillXP = new EnumMap<>(SkillType.class);
+    
+    // Technology
+    private final Set<ResourceLocation> unlockedTechs = new HashSet<>();
+    
+    // Temperature
+    private float bodyTemperature = 37.0f; // Celsius
+    
+    // Languages
+    private final Map<String, Float> languages = new HashMap<>();
+    
+    public HorizonPlayerData() {
+        // Initialize defaults
+        for (VitaminType vitamin : VitaminType.values()) {
+            vitamins.put(vitamin, 50.0f);
+        }
+        for (MineralType mineral : MineralType.values()) {
+            minerals.put(mineral, 50.0f);
+        }
+        for (SkillType skill : SkillType.values()) {
+            skillLevels.put(skill, 1);
+            skillXP.put(skill, 0);
+        }
+    }
+    
+    @Override
+    public void tick() {
+        consumeNutrients(0.05f);
+    }
+    
+    @Override
+    public void consumeNutrients(float amount) {
+        protein = Math.max(0, protein - amount * 0.1f);
+        carbohydrates = Math.max(0, carbohydrates - amount * 0.15f);
+        fats = Math.max(0, fats - amount * 0.05f);
+        hydration = Math.max(0, hydration - amount * 0.2f);
+        calories = Math.max(0, calories - amount * 5.0f);
+        
+        vitamins.replaceAll((k, v) -> Math.max(0, v - amount * 0.02f));
+        minerals.replaceAll((k, v) -> Math.max(0, v - amount * 0.02f));
+    }
+    
+    @Override
+    public void addNutrient(NutrientType type, float amount) {
+        switch (type) {
+            case PROTEIN -> protein = Mth.clamp(protein + amount, 0, 100);
+            case CARBOHYDRATE -> carbohydrates = Mth.clamp(carbohydrates + amount, 0, 100);
+            case FAT -> fats = Mth.clamp(fats + amount, 0, 100);
+            case WATER -> hydration = Mth.clamp(hydration + amount, 0, 100);
+        }
+    }
+    
+    @Override
+    public void addSkillXP(SkillType skill, int xp) {
+        int currentXP = skillXP.get(skill);
+        int currentLevel = skillLevels.get(skill);
+        
+        currentXP += xp;
+        
+        // Level up logic (exponential XP requirement)
+        int xpForNextLevel = (currentLevel * currentLevel * 100);
+        while (currentXP >= xpForNextLevel) {
+            currentXP -= xpForNextLevel;
+            currentLevel++;
+            xpForNextLevel = (currentLevel * currentLevel * 100);
+        }
+        
+        skillXP.put(skill, currentXP);
+        skillLevels.put(skill, currentLevel);
+    }
+    
+    @Override
+    public void unlockTechnology(ResourceLocation techId) {
+        unlockedTechs.add(techId);
+    }
+    
+    @Override
+    public boolean hasTechnology(ResourceLocation techId) {
+        return unlockedTechs.contains(techId);
+    }
+    
+    @Override
+    public void improveLanguage(String languageId, float amount) {
+        languages.merge(languageId, amount, (old, add) -> Mth.clamp(old + add, 0, 1));
+    }
+    
+    // Getters/Setters
+    @Override public float getProtein() { return protein; }
+    @Override public void setProtein(float value) { this.protein = Mth.clamp(value, 0, 100); }
+    
+    @Override public float getCarbohydrates() { return carbohydrates; }
+    @Override public void setCarbohydrates(float value) { this.carbohydrates = Mth.clamp(value, 0, 100); }
+    
+    @Override public float getFats() { return fats; }
+    @Override public void setFats(float value) { this.fats = Mth.clamp(value, 0, 100); }
+    
+    @Override public float getCalories() { return calories; }
+    @Override public void setCalories(float value) { this.calories = Math.max(0, value); }
+    
+    @Override public float getHydration() { return hydration; }
+    @Override public void setHydration(float value) { this.hydration = Mth.clamp(value, 0, 100); }
+    
+    @Override public Map<VitaminType, Float> getVitamins() { return vitamins; }
+    @Override public float getVitamin(VitaminType type) { return vitamins.get(type); }
+    @Override public void setVitamin(VitaminType type, float value) { vitamins.put(type, Mth.clamp(value, 0, 100)); }
+    
+    @Override public Map<MineralType, Float> getMinerals() { return minerals; }
+    @Override public float getMineral(MineralType type) { return minerals.get(type); }
+    @Override public void setMineral(MineralType type, float value) { minerals.put(type, Mth.clamp(value, 0, 100)); }
+    
+    @Override public Map<SkillType, Integer> getSkills() { return skillLevels; }
+    @Override public int getSkillLevel(SkillType skill) { return skillLevels.get(skill); }
+    @Override public int getSkillXP(SkillType skill) { return skillXP.get(skill); }
+    @Override public void setSkillLevel(SkillType skill, int level) { skillLevels.put(skill, level); }
+    
+    @Override public Set<ResourceLocation> getUnlockedTechnologies() { return unlockedTechs; }
+    
+    @Override public float getBodyTemperature() { return bodyTemperature; }
+    @Override public void setBodyTemperature(float temp) { this.bodyTemperature = temp; }
+    
+    @Override public Map<String, Float> getLanguageProficiency() { return languages; }
+    @Override public float getLanguageProficiency(String languageId) { return languages.getOrDefault(languageId, 0.0f); }
+    
+    @Override
+    public CompoundTag serializeNBT() {
+        CompoundTag tag = new CompoundTag();
+        
+        // Nutrition
+        tag.putFloat("Protein", protein);
+        tag.putFloat("Carbohydrates", carbohydrates);
+        tag.putFloat("Fats", fats);
+        tag.putFloat("Calories", calories);
+        tag.putFloat("Hydration", hydration);
+        
+        // Vitamins
+        CompoundTag vitaminsTag = new CompoundTag();
+        vitamins.forEach((type, value) -> vitaminsTag.putFloat(type.name(), value));
+        tag.put("Vitamins", vitaminsTag);
+        
+        // Minerals
+        CompoundTag mineralsTag = new CompoundTag();
+        minerals.forEach((type, value) -> mineralsTag.putFloat(type.name(), value));
+        tag.put("Minerals", mineralsTag);
+        
+        // Skills
+        CompoundTag skillsTag = new CompoundTag();
+        skillLevels.forEach((type, level) -> skillsTag.putInt(type.name(), level));
+        tag.put("SkillLevels", skillsTag);
+        
+        CompoundTag skillXPTag = new CompoundTag();
+        skillXP.forEach((type, xp) -> skillXPTag.putInt(type.name(), xp));
+        tag.put("SkillXP", skillXPTag);
+        
+        // Technologies
+        ListTag techsList = new ListTag();
+        unlockedTechs.forEach(tech -> techsList.add(StringTag.valueOf(tech.toString())));
+        tag.put("Technologies", techsList);
+        
+        // Temperature
+        tag.putFloat("BodyTemperature", bodyTemperature);
+        
+        // Languages
+        CompoundTag langsTag = new CompoundTag();
+        languages.forEach(langsTag::putFloat);
+        tag.put("Languages", langsTag);
+        
+        return tag;
+    }
+    
+    @Override
+    public void deserializeNBT(CompoundTag tag) {
+        // Nutrition
+        protein = tag.getFloat("Protein");
+        carbohydrates = tag.getFloat("Carbohydrates");
+        fats = tag.getFloat("Fats");
+        calories = tag.getFloat("Calories");
+        hydration = tag.getFloat("Hydration");
+        
+        // Vitamins
+        CompoundTag vitaminsTag = tag.getCompound("Vitamins");
+        for (VitaminType type : VitaminType.values()) {
+            if (vitaminsTag.contains(type.name())) {
+                vitamins.put(type, vitaminsTag.getFloat(type.name()));
+            }
+        }
+        
+        // Minerals
+        CompoundTag mineralsTag = tag.getCompound("Minerals");
+        for (MineralType type : MineralType.values()) {
+            if (mineralsTag.contains(type.name())) {
+                minerals.put(type, mineralsTag.getFloat(type.name()));
+            }
+        }
+        
+        // Skills
+        CompoundTag skillsTag = tag.getCompound("SkillLevels");
+        for (SkillType type : SkillType.values()) {
+            if (skillsTag.contains(type.name())) {
+                skillLevels.put(type, skillsTag.getInt(type.name()));
+            }
+        }
+        
+        CompoundTag skillXPTag = tag.getCompound("SkillXP");
+        for (SkillType type : SkillType.values()) {
+            if (skillXPTag.contains(type.name())) {
+                skillXP.put(type, skillXPTag.getInt(type.name()));
+            }
+        }
+        
+        // Technologies
+        ListTag techsList = tag.getList("Technologies", Tag.TAG_STRING);
+        unlockedTechs.clear();
+        for (Tag t : techsList) {
+            unlockedTechs.add(new ResourceLocation(t.getAsString()));
+        }
+        
+        // Temperature
+        bodyTemperature = tag.getFloat("BodyTemperature");
+        
+        // Languages
+        CompoundTag langsTag = tag.getCompound("Languages");
+        languages.clear();
+        for (String key : langsTag.getAllKeys()) {
+            languages.put(key, langsTag.getFloat(key));
+        }
+    }
+    
+    @Override
+    public void copyFrom(IHorizonPlayerData other) {
+        this.deserializeNBT(other.serializeNBT());
+    }
+}
+```
+
+### Capability Registration
+
+```java
+package com.horizonpack.horizoncore.capabilities;
+
+import com.horizonpack.horizoncore.core.HorizonCore;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.capabilities.EntityCapability;
+import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent;
+
+public class HorizonCapabilities {
+    
+    public static final EntityCapability<IHorizonPlayerData, Void> PLAYER_DATA =
+        EntityCapability.create(
+            new ResourceLocation(HorizonCore.MODID, "player_data"),
+            IHorizonPlayerData.class,
+            Void.class
+        );
+    
+    public static void register(RegisterCapabilitiesEvent event) {
+        event.registerEntity(
+            PLAYER_DATA,
+            net.minecraft.world.entity.EntityType.PLAYER,
+            (player, context) -> new HorizonPlayerData()
+        );
+    }
+}
+```
+
+---
+
+## EVENT SYSTEM
+
+### Custom Events
+
+```java
+package com.horizonpack.horizoncore.events.custom;
+
+import com.horizonpack.horizoncore.data.HorizonAge;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.neoforged.bus.api.Event;
+import net.neoforged.bus.api.ICancellableEvent;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * Fired when an age advancement occurs (global or settlement-specific)
+ */
+public class AgeAdvancementEvent extends Event implements ICancellableEvent {
+    private final Level level;
+    private final HorizonAge oldAge;
+    private final HorizonAge newAge;
+    private final @Nullable BlockPos settlementPos;
+    
+    public AgeAdvancementEvent(Level level, HorizonAge oldAge, HorizonAge newAge, @Nullable BlockPos settlementPos) {
+        this.level = level;
+        this.oldAge = oldAge;
+        this.newAge = newAge;
+        this.settlementPos = settlementPos;
+    }
+    
+    public Level getLevel() { return level; }
+    public HorizonAge getOldAge() { return oldAge; }
+    public HorizonAge getNewAge() { return newAge; }
+    public @Nullable BlockPos getSettlementPos() { return settlementPos; }
+    public boolean isGlobalAdvancement() { return settlementPos == null; }
+}
+```
+
+```java
+package com.horizonpack.horizoncore.events.custom;
+
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.player.Player;
+import net.neoforged.bus.api.Event;
+
+/**
+ * Fired when a player unlocks a new technology
+ */
+public class TechnologyUnlockEvent extends Event {
+    private final Player player;
+    private final ResourceLocation technologyId;
+    
+    public TechnologyUnlockEvent(Player player, ResourceLocation technologyId) {
+        this.player = player;
+        this.technologyId = technologyId;
+    }
+    
+    public Player getPlayer() { return player; }
+    public ResourceLocation getTechnologyId() { return technologyId; }
+}
+```
+
+### Event Handler Example
+
+```java
+package com.horizonpack.horizoncore.events;
+
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+
+@Mod.EventBusSubscriber(modid = "horizoncore")
+public class HorizonEventHandlers {
+    
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        Player player = event.getEntity();
+        if (!player.level().isClientSide && player.tickCount % 20 == 0) { // Every second
+            IHorizonPlayerData data = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+            if (data != null) {
+                data.tick();
+            }
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onPlayerClone(PlayerEvent.Clone event) {
+        if (event.isWasDeath()) {
+            // Copy player data on respawn
+            IHorizonPlayerData original = event.getOriginal().getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+            IHorizonPlayerData newData = event.getEntity().getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+            
+            if (original != null && newData != null) {
+                newData.copyFrom(original);
+            }
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            // Sync capabilities to client
+            IHorizonPlayerData data = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+            if (data != null) {
+                // Send sync packet (see Network section)
+            }
+        }
+    }
+}
+```
+
+---
+
+## NETWORK PACKETS
+
+### Packet Handler Setup
+
+```java
+package com.horizonpack.horizoncore.network;
+
+import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.network.packets.SyncPlayerDataPacket;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlerEvent;
+import net.neoforged.neoforge.network.registration.IPayloadRegistrar;
+
+public class HorizonPacketHandler {
+    private static final String PROTOCOL_VERSION = "1";
+    
+    public static void register(final RegisterPayloadHandlerEvent event) {
+        final IPayloadRegistrar registrar = event.registrar(HorizonCore.MODID)
+            .versioned(PROTOCOL_VERSION);
+        
+        registrar.play(
+            SyncPlayerDataPacket.ID,
+            SyncPlayerDataPacket::new,
+            handler -> handler
+                .client(SyncPlayerDataPacket::handleClient)
+        );
+        
+        // Register more packets here...
+    }
+    
+    public static void sendToPlayer(Object packet, ServerPlayer player) {
+        PacketDistributor.PLAYER.with(player).send(packet);
+    }
+    
+    public static void sendToServer(Object packet) {
+        PacketDistributor.SERVER.noArg().send(packet);
+    }
+}
+```
+
+### Example Packet Implementation
+
+```java
+package com.horizonpack.horizoncore.network.packets;
+
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import com.horizonpack.horizoncore.core.HorizonCore;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.player.Player;
+import net.neoforged.neoforge.network.handling.PlayPayloadContext;
+
+public record SyncPlayerDataPacket(CompoundTag playerData) {
+    
+    public static final ResourceLocation ID = new ResourceLocation(HorizonCore.MODID, "sync_player_data");
+    
+    public SyncPlayerDataPacket(FriendlyByteBuf buf) {
+        this(buf.readNbt());
+    }
+    
+    public void write(FriendlyByteBuf buf) {
+        buf.writeNbt(playerData);
+    }
+    
+    public static void handleClient(SyncPlayerDataPacket packet, PlayPayloadContext context) {
+        context.workHandler().submitAsync(() -> {
+            Player player = context.player().orElse(null);
+            if (player != null) {
+                IHorizonPlayerData data = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+                if (data != null) {
+                    data.deserializeNBT(packet.playerData);
+                }
+            }
+        });
+    }
+}
+```
+
+---
+
+## CONFIGURATION
+
+### Config Specification
+
+```java
+package com.horizonpack.horizoncore.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class HorizonConfig {
+    
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+    
+    public static class Common {
+        public final ModConfigSpec.IntValue daysPerAgeMultiplier;
+        public final ModConfigSpec.BooleanValue enableAgeRestrictions;
+        public final ModConfigSpec.IntValue continentCount;
+        public final ModConfigSpec.DoubleValue disasterFrequency;
+        public final ModConfigSpec.DoubleValue npcAggression;
+        public final ModConfigSpec.BooleanValue realisticNutrition;
+        public final ModConfigSpec.IntValue simulationRadius;
+        public final ModConfigSpec.IntValue maxActiveNPCs;
+        
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("world");
+            continentCount = builder
+                .comment("Number of continents to generate")
+                .defineInRange("continentCount", 7, 1, 20);
+            builder.pop();
+            
+            builder.push("progression");
+            daysPerAgeMultiplier = builder
+                .comment("Multiplier for days required per age")
+                .defineInRange("daysPerAgeMultiplier", 1, 0, 10);
+            enableAgeRestrictions = builder
+                .comment("Lock recipes behind age requirements")
+                .define("enableAgeRestrictions", true);
+            builder.pop();
+            
+            builder.push("difficulty");
+            disasterFrequency = builder
+                .comment("How often disasters occur (0.0-1.0)")
+                .defineInRange("disasterFrequency", 0.5, 0.0, 1.0);
+            npcAggression = builder
+                .comment("NPC civilization aggression level (0.0-1.0)")
+                .defineInRange("npcAggression", 0.5, 0.0, 1.0);
+            realisticNutrition = builder
+                .comment("Enable realistic nutrition system")
+                .define("realisticNutrition", true);
+            builder.pop();
+            
+            builder.push("performance");
+            simulationRadius = builder
+                .comment("Radius in chunks for full simulation")
+                .defineInRange("simulationRadius", 8, 1, 32);
+            maxActiveNPCs = builder
+                .comment("Maximum simultaneously active NPCs")
+                .defineInRange("maxActiveNPCs", 1000, 100, 10000);
+            builder.pop();
+        }
+    }
+    
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showNutritionHUD;
+        public final ModConfigSpec.BooleanValue showTemperatureHUD;
+        public final ModConfigSpec.BooleanValue showAgeNotification;
+        
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("hud");
+            showNutritionHUD = builder
+                .comment("Display nutrition stats on HUD")
+                .define("showNutritionHUD", true);
+            showTemperatureHUD = builder
+                .comment("Display body temperature on HUD")
+                .define("showTemperatureHUD", true);
+            showAgeNotification = builder
+                .comment("Show notification when age advances")
+                .define("showAgeNotification", true);
+            builder.pop();
+        }
+    }
+    
+    public static final Common COMMON;
+    public static final Client CLIENT;
+    
+    static {
+        ModConfigSpec.Builder commonBuilder = new ModConfigSpec.Builder();
+        COMMON = new Common(commonBuilder);
+        COMMON_SPEC = commonBuilder.build();
+        
+        ModConfigSpec.Builder clientBuilder = new ModConfigSpec.Builder();
+        CLIENT = new Client(clientBuilder);
+        CLIENT_SPEC = clientBuilder.build();
+    }
+}
+```
+
+---
+
+## CRITICAL IMPLEMENTATION NOTES
+
+### 1. Thread Safety
+- Always use `level.isClientSide` checks
+- Enqueue work properly: `context.enqueueWork(() -> {...})`
+- SavedData modifications trigger `setDirty()`
+
+### 2. NBT Serialization
+- Use correct NBT tag types (TAG_COMPOUND, TAG_LIST, etc.)
+- Handle null/missing data gracefully
+- Version your save formats for future compatibility
+
+### 3. Capability Persistence
+- Implement `INBTSerializable<CompoundTag>`
+- Handle clone events for player death
+- Sync to client when needed
+
+### 4. Performance
+- Batch operations where possible
+- Use chunk-based simulation limits
+- Implement entity culling
+- Cache expensive calculations
+
+### 5. NeoForge-Specific
+- Use `DeferredRegister` for all registrations
+- Capabilities are now registered via events
+- Network packets use new payload system
+- Config uses ModConfigSpec
+
+---
+
+## BUILD.GRADLE TEMPLATE
+
+```gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizoncore'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+minecraft {
+    mappings channel: 'official', version: '1.21.1'
+    
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                horizoncore {
+                    source sourceSets.main
+                }
+            }
+        }
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                horizoncore {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+}
+```
+
+---
+
+This implementation guide provides all the technical details needed to begin development. Reference this alongside the design document for complete specifications.

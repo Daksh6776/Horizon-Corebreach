@@ -1,0 +1,24 @@
+{
+  "description": "horizoncore.tech.writing.desc",
+  "effects": [
+    {
+      "type": "unlock_skill_cap",
+      "new_max_level": 50,
+      "skill": "LITERACY"
+    }
+  ],
+  "icon": "horizoncore:textures/tech/writing.png",
+  "prerequisites": [],
+  "required_age": "bronze_age",
+  "research_cost": [
+    {
+      "count": 10,
+      "item": "minecraft:paper"
+    },
+    {
+      "count": 5,
+      "item": "minecraft:ink_sac"
+    }
+  ],
+  "research_time_ticks": 30000
+}

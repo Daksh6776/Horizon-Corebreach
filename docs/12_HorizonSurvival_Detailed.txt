@@ -1,0 +1,1212 @@
+HorizonSurvival — Detailed Technical Specification
+Mod ID: horizonsurvival
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Advanced Player Survival, Nutrition, Healthcare, and Food Processing
+Absorbed mods: HorizonNutrition, HorizonMedicine, HorizonCooking
+Depends on: horizoncore, horizondata, horizonbiome
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Nutritional System & Registry
+Food Preservation Registry
+Medical Treatments & Procedures
+Cooking Methods & Culinary System
+Medical Infrastructure Registry
+Data Components
+Spoilage & Digestion Engine
+Healthcare & Pathology Engine
+Block & Item Registration
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonSurvival transforms the player's biological existence into a deeply simulated mechanic. It removes the vanilla hunger bar, replacing it with a macro and micro-nutrient metabolic system.
+Nutrition: Tracks 22 distinct nutrients. Imbalances lead to 18 specific deficiency diseases (interfacing with HorizonBiome's disease engine).
+Food Spoilage & Preservation: Food dynamically rots over time based on ambient temperature and preservation methods (10 methods, from drying to irradiation).
+Cooking & Culinary: Cooking alters nutrient bioavailability. 10 specific cooking techniques unlocking through the ages.
+Medicine & Healthcare: Injuries and diseases require specific treatments (11 procedures) administered at specialized medical buildings (8 tiers).
+Metabolism: Digestion operates over time. Calories provide energy for actions, proteins heal wounds, vitamins prevent long-term degradation.
+2. File & Package Structure
+code
+Text
+horizon_survival/
+├── src/main/java/com/horizonpack/horizonsurvival/
+│   ├── core/
+│   │   ├── HorizonSurvival.java
+│   │   ├── SurvivalRegistries.java
+│   │   └── SurvivalConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── NutrientDefinition.java
+│   │   │   ├── PreservationMethod.java
+│   │   │   ├── MedicalTreatment.java
+│   │   │   └── CookingMethod.java
+│   │   └── components/
+│   │       ├── FoodPropertiesComponent.java
+│   │       └── SurvivalDataComponents.java
+│   ├── systems/
+│   │   ├── DigestionEngine.java
+│   │   ├── SpoilageEngine.java
+│   │   └── HealthcareEngine.java
+│   ├── blocks/
+│   │   ├── MedicalBuildingBlock.java
+│   │   ├── CookingStationBlock.java
+│   │   └── PreservationStationBlock.java
+│   ├── blockentities/
+│   │   ├── MedicalBuildingBlockEntity.java
+│   │   ├── CookingStationBlockEntity.java
+│   │   └── PreservationStationBlockEntity.java
+│   ├── items/
+│   │   ├── MedicalSupplyItem.java
+│   │   └── SurvivalFoodItem.java
+│   ├── events/
+│   │   ├── SurvivalEventHandlers.java
+│   │   └── custom/
+│   │       ├── FoodSpoiledEvent.java
+│   │       ├── PatientTreatedEvent.java
+│   │       └── NutrientDeficiencyEvent.java
+│   ├── network/
+│   │   ├── SurvivalPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncMetabolismPacket.java
+│   │       └── ApplyTreatmentPacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── MedicalStationScreen.java
+│   │   │   ├── CookingStationScreen.java
+│   │   │   └── PreservationStationScreen.java
+│   │   └── render/
+│   │       └── PatientBedRenderer.java
+│   └── utils/
+│       ├── MetabolicMath.java
+│       └── SpoilageCalculator.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonsurvival/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonsurvival/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonSurvival.java
+code
+Java
+package com.horizonpack.horizonsurvival.core;
+
+import com.horizonpack.horizonsurvival.data.components.SurvivalDataComponents;
+import com.horizonpack.horizonsurvival.events.SurvivalEventHandlers;
+import com.horizonpack.horizonsurvival.network.SurvivalPacketHandler;
+import com.horizonpack.horizonsurvival.systems.DigestionEngine;
+import com.horizonpack.horizonsurvival.systems.HealthcareEngine;
+import com.horizonpack.horizonsurvival.systems.SpoilageEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonSurvival.MODID)
+public class HorizonSurvival {
+    public static final String MODID = "horizonsurvival";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonSurvival(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, SurvivalConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, SurvivalConfig.CLIENT_SPEC);
+
+        SurvivalRegistries.BLOCKS.register(modEventBus);
+        SurvivalRegistries.ITEMS.register(modEventBus);
+        SurvivalRegistries.BLOCK_ENTITIES.register(modEventBus);
+        SurvivalRegistries.MENU_TYPES.register(modEventBus);
+
+        SurvivalRegistries.NUTRIENT_DEFINITIONS.register(modEventBus);
+        SurvivalRegistries.PRESERVATION_METHODS.register(modEventBus);
+        SurvivalRegistries.COOKING_METHODS.register(modEventBus);
+        SurvivalRegistries.MEDICAL_TREATMENTS.register(modEventBus);
+        SurvivalDataComponents.DATA_COMPONENT_TYPES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(SurvivalRegistries::registerNewRegistries);
+        modEventBus.addListener(SurvivalPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(SurvivalEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            DigestionEngine.init();
+            SpoilageEngine.init();
+            HealthcareEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/SurvivalRegistries.java
+code
+Java
+package com.horizonpack.horizonsurvival.core;
+
+import com.horizonpack.horizonsurvival.data.registry.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class SurvivalRegistries {
+
+    public static final ResourceKey<Registry<NutrientDefinition>> NUTRIENT_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSurvival.MODID, "nutrient_definitions"));
+    public static final ResourceKey<Registry<PreservationMethod>> PRESERVATION_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSurvival.MODID, "preservation_methods"));
+    public static final ResourceKey<Registry<CookingMethod>> COOKING_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSurvival.MODID, "cooking_methods"));
+    public static final ResourceKey<Registry<MedicalTreatment>> TREATMENT_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSurvival.MODID, "medical_treatments"));
+
+    public static final DeferredRegister<NutrientDefinition> NUTRIENT_DEFINITIONS = DeferredRegister.create(NUTRIENT_KEY, HorizonSurvival.MODID);
+    public static final DeferredRegister<PreservationMethod> PRESERVATION_METHODS = DeferredRegister.create(PRESERVATION_KEY, HorizonSurvival.MODID);
+    public static final DeferredRegister<CookingMethod> COOKING_METHODS = DeferredRegister.create(COOKING_KEY, HorizonSurvival.MODID);
+    public static final DeferredRegister<MedicalTreatment> MEDICAL_TREATMENTS = DeferredRegister.create(TREATY_KEY, HorizonSurvival.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonSurvival.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonSurvival.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonSurvival.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonSurvival.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(NUTRIENT_KEY).sync(true));
+        event.register(new RegistryBuilder<>(PRESERVATION_KEY).sync(true));
+        event.register(new RegistryBuilder<>(COOKING_KEY).sync(true));
+        event.register(new RegistryBuilder<>(TREATMENT_KEY).sync(true));
+    }
+
+    static {
+        NutrientDefinition.registerAll();
+        PreservationMethod.registerAll();
+        CookingMethod.registerAll();
+        MedicalTreatment.registerAll();
+    }
+}
+5. Nutritional System & Registry
+File: data/registry/NutrientDefinition.java
+code
+Java
+package com.horizonpack.horizonsurvival.data.registry;
+
+import com.horizonpack.horizonsurvival.core.SurvivalRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record NutrientDefinition(ResourceLocation id, String nameKey, String deficiencyDiseaseId, float dailyRequirement, float decayRatePerTick) {
+
+    public static void registerAll() {
+        register("protein", "nutrient.protein", "kwashiorkor", 50.0f, 0.002f);
+        register("carbohydrates", "nutrient.carbohydrates", "hypoglycemia", 250.0f, 0.01f);
+        register("fat", "nutrient.fat", "essential_fatty_acid_deficiency", 60.0f, 0.001f);
+        register("fiber", "nutrient.fiber", "constipation", 30.0f, 0.003f);
+        register("water", "nutrient.water", "dehydration", 2000.0f, 0.05f);
+        register("vitamin_a", "nutrient.vitamin_a", "night_blindness", 10.0f, 0.0005f);
+        register("vitamin_b1", "nutrient.vitamin_b1", "beriberi", 5.0f, 0.0005f);
+        register("vitamin_b2", "nutrient.vitamin_b2", "ariboflavinosis", 5.0f, 0.0005f);
+        register("vitamin_b3", "nutrient.vitamin_b3", "pellagra", 15.0f, 0.0005f);
+        register("vitamin_b6", "nutrient.vitamin_b6", "peripheral_neuropathy", 5.0f, 0.0005f);
+        register("vitamin_b12", "nutrient.vitamin_b12", "pernicious_anemia", 2.0f, 0.0001f);
+        register("vitamin_c", "nutrient.vitamin_c", "scurvy", 40.0f, 0.001f);
+        register("vitamin_d", "nutrient.vitamin_d", "rickets", 10.0f, 0.0005f);
+        register("vitamin_e", "nutrient.vitamin_e", "hemolytic_anemia", 15.0f, 0.0005f);
+        register("vitamin_k", "nutrient.vitamin_k", "coagulopathy", 8.0f, 0.0005f);
+        register("calcium", "nutrient.calcium", "hypocalcemia", 50.0f, 0.002f);
+        register("iron_mineral", "nutrient.iron_mineral", "anemia", 15.0f, 0.0008f);
+        register("potassium", "nutrient.potassium", "hypokalemia", 100.0f, 0.003f);
+        register("magnesium", "nutrient.magnesium", "hypomagnesemia", 40.0f, 0.001f);
+        register("zinc_mineral", "nutrient.zinc_mineral", "acrodermatitis", 12.0f, 0.0005f);
+        register("sodium", "nutrient.sodium", "hyponatremia", 150.0f, 0.005f);
+        register("phosphorus", "nutrient.phosphorus", "hypophosphatemia", 60.0f, 0.002f);
+    }
+
+    private static void register(String id, String key, String diseaseId, float dailyReq, float decay) {
+        SurvivalRegistries.NUTRIENT_DEFINITIONS.register(id, () -> new NutrientDefinition(
+            ResourceLocation.fromNamespaceAndPath("horizonsurvival", id), key, diseaseId, dailyReq, decay));
+    }
+}
+Total Nutrients registered: 22
+6. Food Preservation Registry
+File: data/registry/PreservationMethod.java
+code
+Java
+package com.horizonpack.horizonsurvival.data.registry;
+
+import com.horizonpack.horizonsurvival.core.SurvivalRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record PreservationMethod(ResourceLocation id, String nameKey, float spoilTimeMultiplier, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("raw", "preservation.raw", 1.0f, "stone_age");
+        register("dried", "preservation.dried", 5.0f, "stone_age");
+        register("smoked", "preservation.smoked", 8.0f, "stone_age");
+        register("salted", "preservation.salted", 15.0f, "copper_age");
+        register("pickled", "preservation.pickled", 20.0f, "bronze_age");
+        register("fermented", "preservation.fermented", 12.0f, "copper_age");
+        register("canned", "preservation.canned", 100.0f, "industrial");
+        register("frozen", "preservation.frozen", 50.0f, "industrial");
+        register("vacuum_sealed", "preservation.vacuum_sealed", 80.0f, "modern");
+        register("irradiated", "preservation.irradiated", 200.0f, "modern");
+    }
+
+    private static void register(String id, String key, float multiplier, String age) {
+        SurvivalRegistries.PRESERVATION_METHODS.register(id, () -> new PreservationMethod(
+            ResourceLocation.fromNamespaceAndPath("horizonsurvival", id), key, multiplier, age));
+    }
+}
+Total Food Preservation Methods registered: 10
+7. Medical Treatments & Procedures
+File: data/registry/MedicalTreatment.java
+code
+Java
+package com.horizonpack.horizonsurvival.data.registry;
+
+import com.horizonpack.horizonsurvival.core.SurvivalRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record MedicalTreatment(ResourceLocation id, String nameKey, float healAmount, int applicationTicks, String requiredSkill, int skillLevel, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("bandage", "treatment.bandage", 4.0f, 60, "medicine", 1, "stone_age");
+        register("splint", "treatment.splint", 0.0f, 100, "medicine", 5, "stone_age"); // Heals broken bones, not HP
+        register("poultice", "treatment.poultice", 6.0f, 200, "botany", 10, "stone_age");
+        register("herbal_remedy", "treatment.herbal_remedy", 8.0f, 300, "botany", 20, "copper_age");
+        register("bloodletting", "treatment.bloodletting", -4.0f, 150, "medicine", 15, "iron_age"); // Historically inaccurate, harms player
+        register("surgery_basic", "treatment.surgery_basic", 15.0f, 1200, "medicine", 40, "medieval");
+        register("surgery_advanced", "treatment.surgery_advanced", 40.0f, 2400, "medicine", 75, "industrial");
+        register("antibiotics", "treatment.antibiotics", 20.0f, 20, "science", 50, "industrial");
+        register("vaccination", "treatment.vaccination", 0.0f, 40, "science", 60, "industrial"); // Prevents disease
+        register("chemotherapy", "treatment.chemotherapy", 0.0f, 3600, "medicine", 90, "modern"); // Cures severe afflictions, deals damage
+        register("nanomedicine", "treatment.nanomedicine", 100.0f, 600, "science", 100, "future");
+    }
+
+    private static void register(String id, String key, float heal, int ticks, String skill, int level, String age) {
+        SurvivalRegistries.MEDICAL_TREATMENTS.register(id, () -> new MedicalTreatment(
+            ResourceLocation.fromNamespaceAndPath("horizonsurvival", id), key, heal, ticks, skill, level, age));
+    }
+}
+Total Medical Treatments registered: 11
+8. Cooking Methods & Culinary System
+File: data/registry/CookingMethod.java
+code
+Java
+package com.horizonpack.horizonsurvival.data.registry;
+
+import com.horizonpack.horizonsurvival.core.SurvivalRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CookingMethod(ResourceLocation id, String nameKey, float nutrientBioavailabilityMultiplier, float digestionSpeedMultiplier, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("raw", "cooking.raw", 0.6f, 0.5f, "stone_age");
+        register("boiled", "cooking.boiled", 0.85f, 1.2f, "stone_age");
+        register("roasted", "cooking.roasted", 0.9f, 1.0f, "stone_age");
+        register("fried", "cooking.fried", 0.8f, 0.8f, "bronze_age");
+        register("baked", "cooking.baked", 0.95f, 1.1f, "copper_age");
+        register("steamed", "cooking.steamed", 1.0f, 1.3f, "bronze_age");
+        register("smoked_cook", "cooking.smoked_cook", 0.8f, 0.9f, "stone_age");
+        register("fermented_cook", "cooking.fermented_cook", 1.2f, 1.5f, "copper_age");
+        register("pressure_cooked", "cooking.pressure_cooked", 1.1f, 1.4f, "industrial");
+        register("molecular_gastronomy", "cooking.molecular_gastronomy", 1.5f, 2.0f, "modern");
+    }
+
+    private static void register(String id, String key, float bioAvail, float digestSpeed, String age) {
+        SurvivalRegistries.COOKING_METHODS.register(id, () -> new CookingMethod(
+            ResourceLocation.fromNamespaceAndPath("horizonsurvival", id), key, bioAvail, digestSpeed, age));
+    }
+}
+Total Cooking Methods registered: 10
+9. Medical Infrastructure Registry
+File: blocks/MedicalBuildingRegistry.java
+code
+Java
+package com.horizonpack.horizonsurvival.blocks;
+
+import com.horizonpack.horizonsurvival.core.SurvivalRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class MedicalBuildingRegistry {
+
+    private static BlockBehaviour.Properties medicalProps(MapColor color, float strength) {
+        return BlockBehaviour.Properties.of().mapColor(color).strength(strength).sound(SoundType.STONE).requiresCorrectToolForDrops();
+    }
+
+    public static final DeferredBlock<Block> HERBALIST_HUT = SurvivalRegistries.BLOCKS.registerBlock("herbalist_hut", () -> new MedicalBuildingBlock(medicalProps(MapColor.WOOD, 2.0f), "stone_age", 1.2f));
+    public static final DeferredBlock<Block> APOTHECARY = SurvivalRegistries.BLOCKS.registerBlock("apothecary", () -> new MedicalBuildingBlock(medicalProps(MapColor.WOOD, 2.5f), "copper_age", 1.5f));
+    public static final DeferredBlock<Block> BARBER_SURGEON = SurvivalRegistries.BLOCKS.registerBlock("barber_surgeon", () -> new MedicalBuildingBlock(medicalProps(MapColor.COLOR_RED, 3.0f), "medieval", 2.0f));
+    public static final DeferredBlock<Block> HOSPITAL = SurvivalRegistries.BLOCKS.registerBlock("hospital", () -> new MedicalBuildingBlock(medicalProps(MapColor.STONE, 5.0f), "industrial", 3.5f));
+    public static final DeferredBlock<Block> CLINIC = SurvivalRegistries.BLOCKS.registerBlock("clinic", () -> new MedicalBuildingBlock(medicalProps(MapColor.QUARTZ, 4.0f), "industrial", 2.5f));
+    public static final DeferredBlock<Block> PHARMACY = SurvivalRegistries.BLOCKS.registerBlock("pharmacy", () -> new MedicalBuildingBlock(medicalProps(MapColor.QUARTZ, 4.0f), "industrial", 2.0f));
+    public static final DeferredBlock<Block> RESEARCH_HOSPITAL = SurvivalRegistries.BLOCKS.registerBlock("research_hospital", () -> new MedicalBuildingBlock(medicalProps(MapColor.METAL, 6.0f), "modern", 5.0f));
+    public static final DeferredBlock<Block> NANOMED_CENTER = SurvivalRegistries.BLOCKS.registerBlock("nanomed_center", () -> new MedicalBuildingBlock(medicalProps(MapColor.COLOR_LIGHT_BLUE, 7.0f), "future", 10.0f));
+
+    public static void registerAll() {
+        SurvivalRegistries.BLOCKS.getEntries().forEach(block -> 
+            SurvivalRegistries.ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+    }
+}
+Total Medical Buildings registered: 8
+10. Data Components
+File: data/components/FoodPropertiesComponent.java
+Items with this component degrade over real-time ticks unless stored in appropriate preservation blocks.
+code
+Java
+package com.horizonpack.horizonsurvival.data.components;
+
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.resources.ResourceLocation;
+
+import java.util.Map;
+
+public record FoodPropertiesComponent(long creationTick, ResourceLocation preservationMethodId, ResourceLocation cookingMethodId, Map<ResourceLocation, Float> nutrientMap) {
+    public static final Codec<FoodPropertiesComponent> CODEC = RecordCodecBuilder.create(inst -> inst.group(
+            Codec.LONG.fieldOf("creation_tick").forGetter(FoodPropertiesComponent::creationTick),
+            ResourceLocation.CODEC.fieldOf("preservation_method").forGetter(FoodPropertiesComponent::preservationMethodId),
+            ResourceLocation.CODEC.fieldOf("cooking_method").forGetter(FoodPropertiesComponent::cookingMethodId),
+            Codec.unboundedMap(ResourceLocation.CODEC, Codec.FLOAT).fieldOf("nutrients").forGetter(FoodPropertiesComponent::nutrientMap)
+    ).apply(inst, FoodPropertiesComponent::new));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, FoodPropertiesComponent> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_LONG, FoodPropertiesComponent::creationTick,
+            ResourceLocation.STREAM_CODEC, FoodPropertiesComponent::preservationMethodId,
+            ResourceLocation.STREAM_CODEC, FoodPropertiesComponent::cookingMethodId,
+            ByteBufCodecs.map(java.util.HashMap::new, ResourceLocation.STREAM_CODEC, ByteBufCodecs.FLOAT), FoodPropertiesComponent::nutrientMap,
+            FoodPropertiesComponent::new
+    );
+}
+File: data/components/SurvivalDataComponents.java
+code
+Java
+package com.horizonpack.horizonsurvival.data.components;
+
+import com.horizonpack.horizonsurvival.core.HorizonSurvival;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+
+public class SurvivalDataComponents {
+    public static final DeferredRegister.DataComponents DATA_COMPONENT_TYPES = DeferredRegister.createDataComponents(BuiltInRegistries.DATA_COMPONENT_TYPE, HorizonSurvival.MODID);
+
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<FoodPropertiesComponent>> FOOD_PROPERTIES = DATA_COMPONENT_TYPES.registerComponentType("food_properties",
+            builder -> builder.persistent(FoodPropertiesComponent.CODEC).networkSynchronized(FoodPropertiesComponent.STREAM_CODEC));
+}
+11. Spoilage & Digestion Engine
+File: systems/SpoilageEngine.java
+code
+Java
+package com.horizonpack.horizonsurvival.systems;
+
+import com.horizonpack.horizonsurvival.data.components.FoodPropertiesComponent;
+import com.horizonpack.horizonsurvival.data.components.SurvivalDataComponents;
+import com.horizonpack.horizonsurvival.data.registry.PreservationMethod;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+
+public class SpoilageEngine {
+
+    public static final long BASE_SPOIL_TICKS = 144000; // 6 in-game days
+
+    public static void init() {}
+
+    /**
+     * Evaluates an item stack. If it has a FoodPropertiesComponent and has passed its expiration tick, it turns to rot.
+     * Called when item is moved in inventory or interacts with the world.
+     */
+    public static ItemStack evaluateSpoilage(ServerLevel level, ItemStack stack) {
+        if (!stack.has(SurvivalDataComponents.FOOD_PROPERTIES.get())) return stack;
+
+        FoodPropertiesComponent data = stack.get(SurvivalDataComponents.FOOD_PROPERTIES.get());
+        if (data == null) return stack;
+
+        long currentTick = level.getGameTime();
+        long age = currentTick - data.creationTick();
+
+        PreservationMethod method = getPreservationMethod(level, data.preservationMethodId());
+        float multiplier = method != null ? method.spoilTimeMultiplier() : 1.0f;
+
+        // Climate modifies spoilage (heat = faster, freezing = slower)
+        float climateModifier = 1.0f; // Integrates with HorizonWorld.ClimateEngine
+
+        if (age > (BASE_SPOIL_TICKS * multiplier * climateModifier)) {
+            ItemStack rot = new ItemStack(Items.ROTTEN_FLESH, stack.getCount());
+            // Fire FoodSpoiledEvent
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new com.horizonpack.horizonsurvival.events.custom.FoodSpoiledEvent(stack, rot));
+            return rot;
+        }
+
+        return stack;
+    }
+
+    private static PreservationMethod getPreservationMethod(ServerLevel level, ResourceLocation id) {
+        return level.registryAccess().registryOrThrow(com.horizonpack.horizonsurvival.core.SurvivalRegistries.PRESERVATION_KEY).get(id);
+    }
+}
+File: systems/DigestionEngine.java
+code
+Java
+package com.horizonpack.horizonsurvival.systems;
+
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import net.minecraft.server.level.ServerPlayer;
+
+public class DigestionEngine {
+
+    public static void init() {}
+
+    /**
+     * Called every player tick. Subtracts basal metabolic rate and active calories.
+     */
+    public static void tickMetabolism(ServerPlayer player) {
+        IHorizonPlayerData data = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+        if (data == null) return;
+
+        float bmr = 0.05f; // Base calories per tick
+        if (player.isSprinting()) bmr *= 3.0f;
+        if (player.isSwimming()) bmr *= 2.5f;
+
+        // Weather integration: shivering burns calories
+        if (data.getBodyTemperature() < 36.0f) bmr *= 1.5f;
+
+        data.setCalories(data.getCalories() - bmr);
+        data.consumeNutrients(0.005f); // Micro-nutrient decay
+
+        // Check for deficiencies
+        checkDeficiencies(player, data);
+    }
+
+    private static void checkDeficiencies(ServerPlayer player, IHorizonPlayerData data) {
+        // Interacts directly with HorizonBiome DiseaseEngine
+        if (data.getVitamin(com.horizonpack.horizoncore.data.VitaminType.C) < 5.0f) {
+            // Apply Scurvy
+        }
+        if (data.getProtein() < 10.0f) {
+            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.WEAKNESS, 200, 1));
+        }
+        if (data.getHydration() < 10.0f) {
+            player.hurt(player.damageSources().dryOut(), 1.0f);
+        }
+    }
+}
+12. Healthcare & Pathology Engine
+File: systems/HealthcareEngine.java
+code
+Java
+package com.horizonpack.horizonsurvival.systems;
+
+import com.horizonpack.horizonsurvival.data.registry.MedicalTreatment;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+
+public class HealthcareEngine {
+
+    public static void init() {}
+
+    public static boolean applyTreatment(ServerLevel level, Player patient, Player doctor, ResourceLocation treatmentId, float facilityBonus) {
+        MedicalTreatment treatment = getTreatment(level, treatmentId);
+        if (treatment == null) return false;
+
+        // Skill check via HorizonCore
+        // int docSkill = HorizonCore.getSkill(doctor, treatment.requiredSkill());
+        // if (docSkill < treatment.skillLevel()) return false;
+
+        float effectiveHeal = treatment.healAmount() * facilityBonus;
+        
+        if (effectiveHeal > 0) {
+            patient.heal(effectiveHeal);
+        } else if (effectiveHeal < 0) {
+            // Bloodletting etc.
+            patient.hurt(patient.damageSources().magic(), -effectiveHeal);
+        }
+
+        // Dispatch cure to HorizonBiome DiseaseEngine
+        // HorizonBiomeApi.cureDisease(patient, treatmentId);
+
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new com.horizonpack.horizonsurvival.events.custom.PatientTreatedEvent(patient, doctor, treatment));
+        return true;
+    }
+
+    private static MedicalTreatment getTreatment(ServerLevel level, ResourceLocation id) {
+        return level.registryAccess().registryOrThrow(com.horizonpack.horizonsurvival.core.SurvivalRegistries.TREATMENT_KEY).get(id);
+    }
+}
+13. Block & Item Registration
+File: core/SurvivalRegistries.java (Appended)
+code
+Java
+// --- WORKSTATION BLOCKS ---
+    public static final DeferredBlock<Block> DRYING_RACK = BLOCKS.registerBlock("drying_rack", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(1.5f), "dried"));
+    public static final DeferredBlock<Block> SMOKING_RACK = BLOCKS.registerBlock("smoking_rack", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f), "smoked"));
+    public static final DeferredBlock<Block> SALTING_BARREL = BLOCKS.registerBlock("salting_barrel", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f), "salted"));
+    public static final DeferredBlock<Block> PICKLING_JAR = BLOCKS.registerBlock("pickling_jar", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.GLASS).strength(0.5f).sound(SoundType.GLASS), "pickled"));
+    public static final DeferredBlock<Block> CANNING_MACHINE = BLOCKS.registerBlock("canning_machine", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(4.0f).sound(SoundType.METAL), "canned"));
+    public static final DeferredBlock<Block> FREEZER = BLOCKS.registerBlock("freezer", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.SNOW).strength(4.0f).sound(SoundType.METAL), "frozen"));
+    public static final DeferredBlock<Block> VACUUM_SEALER = BLOCKS.registerBlock("vacuum_sealer", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(4.0f), "vacuum_sealed"));
+    public static final DeferredBlock<Block> IRRADIATOR = BLOCKS.registerBlock("irradiator", () -> new PreservationStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_LIGHT_GRAY).strength(6.0f), "irradiated"));
+
+    public static final DeferredBlock<Block> BOILING_POT = BLOCKS.registerBlock("boiling_pot", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(2.0f), "boiled"));
+    public static final DeferredBlock<Block> ROASTING_OVEN = BLOCKS.registerBlock("roasting_oven", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(3.5f), "roasted"));
+    public static final DeferredBlock<Block> DEEP_FRYER = BLOCKS.registerBlock("deep_fryer", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(4.0f), "fried"));
+    public static final DeferredBlock<Block> BAKING_OVEN = BLOCKS.registerBlock("baking_oven", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(3.5f), "baked"));
+    public static final DeferredBlock<Block> STEAMER = BLOCKS.registerBlock("steamer", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(3.0f), "steamed"));
+    public static final DeferredBlock<Block> PRESSURE_COOKER = BLOCKS.registerBlock("pressure_cooker", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(4.5f), "pressure_cooked"));
+    public static final DeferredBlock<Block> MOLECULAR_ASSEMBLER = BLOCKS.registerBlock("molecular_assembler", () -> new CookingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_LIGHT_BLUE).strength(6.0f), "molecular_gastronomy"));
+
+    // --- MEDICAL ITEMS ---
+    public static final DeferredItem<Item> BANDAGE = ITEMS.registerSimpleItem("bandage", new Item.Properties().stacksTo(16));
+    public static final DeferredItem<Item> SPLINT = ITEMS.registerSimpleItem("splint", new Item.Properties().stacksTo(4));
+    public static final DeferredItem<Item> POULTICE = ITEMS.registerSimpleItem("poultice", new Item.Properties().stacksTo(16));
+    public static final DeferredItem<Item> HERBAL_REMEDY = ITEMS.registerSimpleItem("herbal_remedy", new Item.Properties().stacksTo(16));
+    public static final DeferredItem<Item> BLOODLETTING_KIT = ITEMS.registerSimpleItem("bloodletting_kit", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> BASIC_SURGERY_KIT = ITEMS.registerSimpleItem("surgery_basic_kit", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> ADVANCED_SURGERY_KIT = ITEMS.registerSimpleItem("surgery_advanced_kit", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> ANTIBIOTICS = ITEMS.registerSimpleItem("antibiotics", new Item.Properties().stacksTo(64));
+    public static final DeferredItem<Item> VACCINE = ITEMS.registerSimpleItem("vaccine", new Item.Properties().stacksTo(16));
+    public static final DeferredItem<Item> CHEMO_DRIP = ITEMS.registerSimpleItem("chemo_drip", new Item.Properties().stacksTo(4));
+    public static final DeferredItem<Item> NANITE_INJECTOR = ITEMS.registerSimpleItem("nanite_injector", new Item.Properties().stacksTo(1));
+
+    static {
+        // Auto register BlockItems for all Blocks
+        BLOCKS.getEntries().forEach(block -> 
+            ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+    }
+14. Block Entities
+File: blockentities/PreservationStationBlockEntity.java
+code
+Java
+package com.horizonpack.horizonsurvival.blockentities;
+
+import com.horizonpack.horizonsurvival.core.SurvivalRegistries;
+import com.horizonpack.horizonsurvival.data.components.FoodPropertiesComponent;
+import com.horizonpack.horizonsurvival.data.components.SurvivalDataComponents;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.items.ItemStackHandler;
+import org.jetbrains.annotations.Nullable;
+
+public class PreservationStationBlockEntity extends BlockEntity implements MenuProvider {
+
+    public final ItemStackHandler inventory = new ItemStackHandler(2) {
+        @Override
+        protected void onContentsChanged(int slot) {
+            setChanged();
+        }
+    };
+
+    private int processTick = 0;
+    private final int MAX_PROCESS_TICKS = 400;
+    private final String targetMethod;
+
+    public PreservationStationBlockEntity(BlockPos pos, BlockState state, String targetMethod) {
+        super(SurvivalRegistries.BLOCK_ENTITIES.getEntries().stream()
+                .filter(r -> r.getId().getPath().equals("preservation_station")).findFirst().get().get(), pos, state);
+        this.targetMethod = targetMethod;
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, PreservationStationBlockEntity be) {
+        ItemStack input = be.inventory.getStackInSlot(0);
+        if (!input.isEmpty() && input.has(SurvivalDataComponents.FOOD_PROPERTIES.get())) {
+            be.processTick++;
+            if (be.processTick >= be.MAX_PROCESS_TICKS) {
+                // Apply preservation
+                ItemStack output = input.copy();
+                output.setCount(1);
+                
+                FoodPropertiesComponent oldComp = output.get(SurvivalDataComponents.FOOD_PROPERTIES.get());
+                FoodPropertiesComponent newComp = new FoodPropertiesComponent(
+                        level.getGameTime(), // Reset expiration on preservation
+                        ResourceLocation.fromNamespaceAndPath("horizonsurvival", be.targetMethod),
+                        oldComp.cookingMethodId(),
+                        oldComp.nutrientMap()
+                );
+                output.set(SurvivalDataComponents.FOOD_PROPERTIES.get(), newComp);
+
+                if (be.inventory.insertItem(1, output, false).isEmpty()) {
+                    be.inventory.extractItem(0, 1, false);
+                }
+                be.processTick = 0;
+            }
+            be.setChanged();
+        } else {
+            be.processTick = 0;
+        }
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.put("Inventory", inventory.serializeNBT(registries));
+        tag.putInt("ProcessTick", processTick);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("Inventory")) inventory.deserializeNBT(registries, tag.getCompound("Inventory"));
+        processTick = tag.getInt("ProcessTick");
+    }
+
+    @Override
+    public net.minecraft.network.chat.Component getDisplayName() {
+        return net.minecraft.network.chat.Component.translatable("block.horizonsurvival.preservation_station");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player player) {
+        return null; // Gui implementation
+    }
+}
+15. Event Hooks
+File: events/SurvivalEventHandlers.java
+Intercepts food consumption and injects HorizonSurvival metabolic data instead of vanilla hunger.
+code
+Java
+package com.horizonpack.horizonsurvival.events;
+
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import com.horizonpack.horizonsurvival.core.HorizonSurvival;
+import com.horizonpack.horizonsurvival.data.components.FoodPropertiesComponent;
+import com.horizonpack.horizonsurvival.data.components.SurvivalDataComponents;
+import com.horizonpack.horizonsurvival.systems.DigestionEngine;
+import com.horizonpack.horizonsurvival.systems.SpoilageEngine;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.entity.living.LivingEntityUseItemEvent;
+import net.neoforged.neoforge.event.entity.player.EntityItemPickupEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+
+import java.util.Map;
+import net.minecraft.resources.ResourceLocation;
+
+@Mod.EventBusSubscriber(modid = HorizonSurvival.MODID)
+public class SurvivalEventHandlers {
+
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        if (!event.getEntity().level().isClientSide && event.getEntity() instanceof ServerPlayer player) {
+            if (player.tickCount % 20 == 0) { // Tick metabolism every 1 second
+                DigestionEngine.tickMetabolism(player);
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public static void onItemPickup(EntityItemPickupEvent event) {
+        if (!event.getEntity().level().isClientSide) {
+            ItemStack stack = event.getItem().getItem();
+            // Instantly check and swap for rotten flesh if spoiled
+            ItemStack checked = SpoilageEngine.evaluateSpoilage((net.minecraft.server.level.ServerLevel)event.getEntity().level(), stack);
+            if (checked.getItem() != stack.getItem()) {
+                event.getItem().setItem(checked);
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public static void onFoodEaten(LivingEntityUseItemEvent.Finish event) {
+        if (event.getEntity() instanceof ServerPlayer player && !player.level().isClientSide) {
+            ItemStack stack = event.getItem();
+            if (stack.has(SurvivalDataComponents.FOOD_PROPERTIES.get())) {
+                FoodPropertiesComponent foodData = stack.get(SurvivalDataComponents.FOOD_PROPERTIES.get());
+                IHorizonPlayerData playerData = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+                
+                if (playerData != null && foodData != null) {
+                    // Extract custom nutrients
+                    for (Map.Entry<ResourceLocation, Float> entry : foodData.nutrientMap().entrySet()) {
+                        // Resolve NutrientType from string ID (simplified)
+                        // HorizonCore.addNutrient(playerData, entry.getKey(), entry.getValue());
+                    }
+                    playerData.setCalories(playerData.getCalories() + 200.0f); // Base calorie addition
+                }
+            }
+        }
+    }
+}
+16. Network Packets
+File: network/packets/ApplyTreatmentPacket.java
+Sent by the client when clicking the "Administer" button in a MedicalBuilding screen.
+code
+Java
+package com.horizonpack.horizonsurvival.network.packets;
+
+import com.horizonpack.horizonsurvival.core.HorizonSurvival;
+import com.horizonpack.horizonsurvival.systems.HealthcareEngine;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.UUID;
+
+public record ApplyTreatmentPacket(UUID patientId, ResourceLocation treatmentId) implements CustomPacketPayload {
+
+    public static final Type<ApplyTreatmentPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonSurvival.MODID, "apply_treatment"));
+
+    public static final StreamCodec<ByteBuf, ApplyTreatmentPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.UUID, ApplyTreatmentPacket::patientId,
+        ResourceLocation.STREAM_CODEC, ApplyTreatmentPacket::treatmentId,
+        ApplyTreatmentPacket::new
+    );
+
+    @Override
+    public Type<ApplyTreatmentPacket> type() { return TYPE; }
+
+    public static void handleServer(ApplyTreatmentPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.server.level.ServerPlayer doctor = (net.minecraft.server.level.ServerPlayer) context.player();
+            net.minecraft.world.entity.player.Player patient = doctor.level().getPlayerByUUID(packet.patientId());
+            
+            if (patient != null) {
+                // Facility bonus assumes patient is within range of the BlockEntity
+                HealthcareEngine.applyTreatment(doctor.serverLevel(), patient, doctor, packet.treatmentId(), 1.0f);
+            }
+        });
+    }
+}
+Packet Registration:
+code
+Java
+package com.horizonpack.horizonsurvival.network;
+
+import com.horizonpack.horizonsurvival.core.HorizonSurvival;
+import com.horizonpack.horizonsurvival.network.packets.ApplyTreatmentPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class SurvivalPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonSurvival.MODID).versioned("1.0.0");
+        registrar.playToServer(ApplyTreatmentPacket.TYPE, ApplyTreatmentPacket.STREAM_CODEC, ApplyTreatmentPacket::handleServer);
+    }
+}
+17. Configuration
+File: core/SurvivalConfig.java
+code
+Java
+package com.horizonpack.horizonsurvival.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class SurvivalConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue baseSpoilageMultiplier;
+        public final ModConfigSpec.DoubleValue basalMetabolicRateMultiplier;
+        public final ModConfigSpec.BooleanValue enableDeficiencyDiseases;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("nutrition");
+            basalMetabolicRateMultiplier = builder.comment("Scales calorie drain").defineInRange("basalMetabolicRateMultiplier", 1.0, 0.1, 10.0);
+            enableDeficiencyDiseases = builder.comment("If false, vitamin lack only gives slowness, no HorizonBiome diseases").define("enableDeficiencyDiseases", true);
+            builder.pop();
+
+            builder.push("food");
+            baseSpoilageMultiplier = builder.comment("Higher = food spoils faster").defineInRange("baseSpoilageMultiplier", 1.0, 0.1, 10.0);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showDetailedNutrientTooltips;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showDetailedNutrientTooltips = builder.comment("Show exact vitamin/mineral breakdown on food items").define("showDetailedNutrientTooltips", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+18. Data Pack Integration
+Custom Nutrition Profiles, Medical Treatments, and Food Properties are driven by the dynamic RegistryBuilder synced registries mapped in Section 4. Data Pack developers can create data/horizonsurvival/medical_treatments/custom_heal.json following the MedicalTreatment schema to automatically inject new procedures without writing Java code.
+19. Blockstate & Model JSONs
+19.1 Boiling Pot Blockstate
+assets/horizonsurvival/blockstates/boiling_pot.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonsurvival:block/boiling_pot" }
+  }
+}
+19.2 Boiling Pot Model
+assets/horizonsurvival/models/block/boiling_pot.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "bottom": "minecraft:block/cauldron_bottom",
+    "top": "minecraft:block/cauldron_inner",
+    "side": "minecraft:block/cauldron_side"
+  }
+}
+19.3 Antibiotics Item Model
+assets/horizonsurvival/models/item/antibiotics.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonsurvival:item/antibiotics"
+  }
+}
+20. Recipe JSONs
+20.1 Crafting: Bandage
+data/horizonsurvival/recipes/bandage.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "stone_age" }
+  ],
+  "pattern": [
+    "SS ",
+    "SS ",
+    "   "
+  ],
+  "key": {
+    "S": { "item": "minecraft:string" }
+  },
+  "result": {
+    "id": "horizonsurvival:bandage",
+    "count": 4
+  }
+}
+21. Loot Table JSONs
+21.1 Apothecary Block Drop
+data/horizonsurvival/loot_tables/blocks/apothecary.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonsurvival:apothecary",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "source": "block_entity",
+              "include": ["horizonsurvival:inventory"]
+            }
+          ]
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+22. Tag JSONs
+22.1 Medical Supplies Tag
+data/horizonsurvival/tags/items/medical_supplies.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonsurvival:bandage",
+    "horizonsurvival:splint",
+    "horizonsurvival:poultice",
+    "horizonsurvival:herbal_remedy",
+    "horizonsurvival:bloodletting_kit",
+    "horizonsurvival:surgery_basic_kit",
+    "horizonsurvival:surgery_advanced_kit",
+    "horizonsurvival:antibiotics",
+    "horizonsurvival:vaccine",
+    "horizonsurvival:chemo_drip",
+    "horizonsurvival:nanite_injector"
+  ]
+}
+23. Lang / Localization
+assets/horizonsurvival/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonsurvival.medical": "HorizonSurvival - Medical & Health",
+  "itemGroup.horizonsurvival.cooking": "HorizonSurvival - Culinary & Food",
+
+  "block.horizonsurvival.herbalist_hut": "Herbalist Hut",
+  "block.horizonsurvival.apothecary": "Apothecary Table",
+  "block.horizonsurvival.barber_surgeon": "Barber Surgeon Station",
+  "block.horizonsurvival.hospital": "Hospital Bed",
+  "block.horizonsurvival.clinic": "Clinic Examination Table",
+  "block.horizonsurvival.pharmacy": "Pharmacy Counter",
+  "block.horizonsurvival.research_hospital": "Research Hospital Ward",
+  "block.horizonsurvival.nanomed_center": "Nanomedicine Bay",
+
+  "block.horizonsurvival.drying_rack": "Drying Rack",
+  "block.horizonsurvival.smoking_rack": "Smoking Rack",
+  "block.horizonsurvival.salting_barrel": "Salting Barrel",
+  "block.horizonsurvival.pickling_jar": "Pickling Jar",
+  "block.horizonsurvival.canning_machine": "Canning Machine",
+  "block.horizonsurvival.freezer": "Industrial Freezer",
+  "block.horizonsurvival.vacuum_sealer": "Vacuum Sealer",
+  "block.horizonsurvival.irradiator": "Food Irradiator",
+
+  "block.horizonsurvival.boiling_pot": "Boiling Pot",
+  "block.horizonsurvival.roasting_oven": "Roasting Oven",
+  "block.horizonsurvival.deep_fryer": "Deep Fryer",
+  "block.horizonsurvival.baking_oven": "Baking Oven",
+  "block.horizonsurvival.steamer": "Industrial Steamer",
+  "block.horizonsurvival.pressure_cooker": "Pressure Cooker",
+  "block.horizonsurvival.molecular_assembler": "Molecular Gastronomy Assembler",
+
+  "item.horizonsurvival.bandage": "Linen Bandage",
+  "item.horizonsurvival.splint": "Wooden Splint",
+  "item.horizonsurvival.poultice": "Healing Poultice",
+  "item.horizonsurvival.herbal_remedy": "Herbal Remedy",
+  "item.horizonsurvival.bloodletting_kit": "Bloodletting Kit",
+  "item.horizonsurvival.surgery_basic_kit": "Basic Surgical Instruments",
+  "item.horizonsurvival.surgery_advanced_kit": "Advanced Surgical Kit",
+  "item.horizonsurvival.antibiotics": "Antibiotics",
+  "item.horizonsurvival.vaccine": "Vaccine Syringe",
+  "item.horizonsurvival.chemo_drip": "Chemotherapy IV",
+  "item.horizonsurvival.nanite_injector": "Medical Nanite Injector",
+
+  "nutrient.protein": "Protein",
+  "nutrient.carbohydrates": "Carbohydrates",
+  "nutrient.fat": "Fats",
+  "nutrient.fiber": "Dietary Fiber",
+  "nutrient.water": "Hydration",
+  "nutrient.vitamin_a": "Vitamin A",
+  "nutrient.vitamin_b1": "Vitamin B1 (Thiamine)",
+  "nutrient.vitamin_b2": "Vitamin B2 (Riboflavin)",
+  "nutrient.vitamin_b3": "Vitamin B3 (Niacin)",
+  "nutrient.vitamin_b6": "Vitamin B6",
+  "nutrient.vitamin_b12": "Vitamin B12",
+  "nutrient.vitamin_c": "Vitamin C",
+  "nutrient.vitamin_d": "Vitamin D",
+  "nutrient.vitamin_e": "Vitamin E",
+  "nutrient.vitamin_k": "Vitamin K",
+  "nutrient.calcium": "Calcium",
+  "nutrient.iron_mineral": "Iron",
+  "nutrient.potassium": "Potassium",
+  "nutrient.magnesium": "Magnesium",
+  "nutrient.zinc_mineral": "Zinc",
+  "nutrient.sodium": "Sodium",
+  "nutrient.phosphorus": "Phosphorus",
+
+  "preservation.raw": "Raw",
+  "preservation.dried": "Dried",
+  "preservation.smoked": "Smoked",
+  "preservation.salted": "Salt-Cured",
+  "preservation.pickled": "Pickled",
+  "preservation.fermented": "Fermented",
+  "preservation.canned": "Canned",
+  "preservation.frozen": "Frozen",
+  "preservation.vacuum_sealed": "Vacuum Sealed",
+  "preservation.irradiated": "Irradiated",
+
+  "cooking.raw": "Raw",
+  "cooking.boiled": "Boiled",
+  "cooking.roasted": "Roasted",
+  "cooking.fried": "Fried",
+  "cooking.baked": "Baked",
+  "cooking.steamed": "Steamed",
+  "cooking.smoked_cook": "Smoked",
+  "cooking.fermented_cook": "Fermented",
+  "cooking.pressure_cooked": "Pressure Cooked",
+  "cooking.molecular_gastronomy": "Molecularly Assembled",
+
+  "treatment.bandage": "Bandaging Wound",
+  "treatment.splint": "Splinting Fracture",
+  "treatment.poultice": "Applying Poultice",
+  "treatment.herbal_remedy": "Administering Herb",
+  "treatment.bloodletting": "Bloodletting",
+  "treatment.surgery_basic": "Basic Surgery",
+  "treatment.surgery_advanced": "Advanced Surgery",
+  "treatment.antibiotics": "Administering Antibiotics",
+  "treatment.vaccination": "Vaccinating",
+  "treatment.chemotherapy": "Chemotherapy",
+  "treatment.nanomedicine": "Injecting Medical Nanites",
+
+  "advancements.horizonsurvival.root.title": "Stay Alive",
+  "advancements.horizonsurvival.root.desc": "Consume a food item balancing a specific macronutrient.",
+  "advancements.horizonsurvival.surgery.title": "Under the Knife",
+  "advancements.horizonsurvival.surgery.desc": "Perform or survive a Basic Surgery operation."
+}
+24. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonsurvival'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonsurvival', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonbiome:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+25. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonsurvival"
+    version = "1.0.0"
+    displayName = "Horizon Survival & Healthcare"
+    description = """
+Replaces vanilla hunger with a deeply simulated nutritional and metabolic engine.
+Includes 22 macro/micro nutrients, 10 preservation techniques, 10 cooking techniques, and 11 distinct medical treatments.
+"""
+    logoFile = "horizonsurvival.png"
+
+[[dependencies.horizonsurvival]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonsurvival]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonsurvival]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsurvival]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsurvival]]
+    modId = "horizonbiome"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+26. Critical Implementation Notes
+Vanilla Hunger Bar Override:
+Vanilla FoodData is deeply hardcoded into Player. To override it, SurvivalEventHandlers must cancel FoodLevelChangeEvent entirely and suppress vanilla starvation damage in LivingHurtEvent. The client-side HUD overlay representing the hunger bar is disabled via RenderGuiLayerEvent.Pre in the client package, replacing it with the HorizonCore nutrition HUD.
+Real-time Spoilage vs TPS Drop:
+Checking the FoodPropertiesComponent of every item stack in the world and in every inventory every tick will crash a server. SpoilageEngine.evaluateSpoilage is only called dynamically upon interaction: moving the item, picking it up, or preparing to eat it. Background rotting in chests is checked sparsely by overriding block entity ticks or checking timestamp deltas when the inventory is opened.
+Data Component Safety in Crafting:
+When cooking raw meat (e.g., in a CookingStationBlockEntity), the FoodPropertiesComponent from the input must be mathematically transformed, not destroyed. The output stack inherits the creationTick, but the cookingMethodId is overwritten, and the nutrientMap values are multiplied by the CookingMethod's bioavailability index.
+Surgical Failure Math:
+HealthcareEngine.applyTreatment relies on the skill value queried from IHorizonPlayerData. If the administering player's Medical skill is below the threshold for surgery_advanced (75), the effectiveHeal is inverted using a logarithmic scale, causing massive immediate damage (representing a surgical botch/hemorrhage) instead of healing.
+Climatic Integration for Spoilage:
+SpoilageEngine fetches climate data. It does this without directly passing coordinates for items stored in inventories by looking up the BlockPos of the Container block entity via Level. If an item is dropped on the ground in the Permafrost biome (HorizonWorld / HorizonBiome), the localized ClimateSnapshot ambient temperature effectively halts the decay timer naturally.
+Disease Deficiencies Bridge:
+The DigestionEngine checks for nutrient deficits below a strict 5.0f threshold. When a threshold is broken, rather than handling the debuffs itself, it fires a NutrientDeficiencyEvent. HorizonBiome listens for this event to apply actual DiseaseType active infections (e.g., Scurvy, Rickets), keeping the pathogenic and nutritional systems cleanly decoupled.
+Cross-Mod Medical Compatibility:
+MedicalTreatment entries define required skills as Strings (e.g., "medicine", "science"). These strings map directly to SkillType.name() stored inside HorizonCore's player capability. If HorizonSkills is installed, these checks become much more granular, utilizing dynamic RPG levels instead of base integers.
+Bloodletting Historical Accuracy Limit:
+The bloodletting treatment is explicitly designed to hurt the player (-4.0f heal amount). However, it is registered under the MedicalTreatment schema. NPC civilizations in HorizonSociety running Iron Age or Medieval government AIs will actively attempt to administer this "cure" to player characters who suffer from unrelated diseases, making early-age NPC hospitals actively dangerous.

@@ -1,0 +1,1162 @@
+HorizonEconomy — Detailed Technical Specification
+Mod ID: horizoneconomy
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Global Economy, Trade, Labor, Finance, and Agricultural Scaling
+Absorbed mods: HorizonEconomy, HorizonLabor, HorizonAgriculture, HorizonFinance
+Depends on: horizoncore, horizondata, horizonbiome, horizonsociety
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Currency System
+Trade Goods & Commodities
+Financial Institutions Registry
+Labor & Wage System
+Agricultural Systems
+Global Market Engine
+World SavedData (Economy State)
+Entity Implementation (Merchant Caravan)
+Block & Item Registry
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonEconomy simulates the intricate web of macro and microeconomics spanning human history. It introduces systems for resource valuation, currency evolution, labor management, and advanced agricultural scaling.
+Currency Evolution: Tracks exchange mediums from primitive barter and commodity money (salt, grain) to minted coinage, fiat paper, and digital currencies.
+Global Commodity Markets: Tracks the supply, demand, and precise historical value of 13 commodity categories across the world.
+Financial Institutions: Functional blocks that evolve the financial capabilities of a settlement (Markets → Banks → Stock Exchanges).
+Labor & Wages: A dynamic employment system managing 6 labor tiers, worker happiness, strikes, and wage distribution.
+Agricultural Systems: Progressive farming techniques (slash-and-burn to hydroponics) that govern crop yields, soil depletion, and field rotation on a macro scale.
+2. File & Package Structure
+code
+Text
+horizon_economy/
+├── src/main/java/com/horizonpack/horizoneconomy/
+│   ├── core/
+│   │   ├── HorizonEconomy.java
+│   │   ├── EconomyRegistries.java
+│   │   └── EconomyConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── CurrencyType.java
+│   │   │   ├── CommodityCategory.java
+│   │   │   ├── LaborType.java
+│   │   │   └── AgriculturalSystem.java
+│   │   └── EconomySavedData.java
+│   ├── systems/
+│   │   ├── MarketEngine.java
+│   │   ├── LaborEngine.java
+│   │   ├── AgricultureEngine.java
+│   │   └── BankingEngine.java
+│   ├── blocks/
+│   │   ├── MarketStallBlock.java
+│   │   ├── TradingPostBlock.java
+│   │   ├── MerchantGuildBlock.java
+│   │   ├── BankBlock.java
+│   │   ├── StockExchangeBlock.java
+│   │   ├── CentralBankBlock.java
+│   │   ├── InsuranceCompanyBlock.java
+│   │   ├── TaxOfficeBlock.java
+│   │   └── IrrigationControllerBlock.java
+│   ├── blockentities/
+│   │   ├── BankBlockEntity.java
+│   │   ├── StockExchangeBlockEntity.java
+│   │   ├── MarketStallBlockEntity.java
+│   │   └── IrrigationControllerBlockEntity.java
+│   ├── items/
+│   │   ├── CoinItem.java
+│   │   ├── BankNoteItem.java
+│   │   ├── CreditCardItem.java
+│   │   └── CommodityContractItem.java
+│   ├── entities/
+│   │   ├── MerchantCaravanEntity.java
+│   │   └── MerchantCaravanRenderer.java
+│   ├── events/
+│   │   ├── EconomyEventHandlers.java
+│   │   └── custom/
+│   │       ├── MarketCrashEvent.java
+│   │       ├── StrikeStartEvent.java
+│   │       └── HarvestYieldEvent.java
+│   ├── network/
+│   │   ├── EconomyPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncEconomyStatePacket.java
+│   │       └── MarketTransactionPacket.java
+│   ├── client/
+│   │   └── gui/
+│   │       ├── BankScreen.java
+│   │       ├── StockExchangeScreen.java
+│   │       └── MarketStallScreen.java
+│   └── utils/
+│       ├── InflationMath.java
+│       └── WageCalculator.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizoneconomy/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizoneconomy/
+│       ├── recipes/
+│       ├── loot_tables/
+│       ├── tags/
+│       └── advancements/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonEconomy.java
+code
+Java
+package com.horizonpack.horizoneconomy.core;
+
+import com.horizonpack.horizoneconomy.events.EconomyEventHandlers;
+import com.horizonpack.horizoneconomy.network.EconomyPacketHandler;
+import com.horizonpack.horizoneconomy.systems.MarketEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonEconomy.MODID)
+public class HorizonEconomy {
+    public static final String MODID = "horizoneconomy";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonEconomy(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, EconomyConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, EconomyConfig.CLIENT_SPEC);
+
+        EconomyRegistries.BLOCKS.register(modEventBus);
+        EconomyRegistries.ITEMS.register(modEventBus);
+        EconomyRegistries.BLOCK_ENTITIES.register(modEventBus);
+        EconomyRegistries.ENTITY_TYPES.register(modEventBus);
+        EconomyRegistries.MENU_TYPES.register(modEventBus);
+
+        EconomyRegistries.CURRENCY_TYPES.register(modEventBus);
+        EconomyRegistries.COMMODITY_CATEGORIES.register(modEventBus);
+        EconomyRegistries.LABOR_TYPES.register(modEventBus);
+        EconomyRegistries.AGRICULTURAL_SYSTEMS.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(EconomyRegistries::registerNewRegistries);
+        modEventBus.addListener(EconomyRegistries::registerEntityAttributes);
+        modEventBus.addListener(EconomyPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(EconomyEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            MarketEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/EconomyRegistries.java
+code
+Java
+package com.horizonpack.horizoneconomy.core;
+
+import com.horizonpack.horizoneconomy.data.registry.*;
+import com.horizonpack.horizoneconomy.blocks.*;
+import com.horizonpack.horizoneconomy.blockentities.*;
+import com.horizonpack.horizoneconomy.items.*;
+import com.horizonpack.horizoneconomy.entities.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class EconomyRegistries {
+
+    public static final ResourceKey<Registry<CurrencyType>> CURRENCY_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonEconomy.MODID, "currency_types"));
+    public static final ResourceKey<Registry<CommodityCategory>> COMMODITY_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonEconomy.MODID, "commodity_categories"));
+    public static final ResourceKey<Registry<LaborType>> LABOR_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonEconomy.MODID, "labor_types"));
+    public static final ResourceKey<Registry<AgriculturalSystem>> AGRI_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonEconomy.MODID, "agricultural_systems"));
+
+    public static final DeferredRegister<CurrencyType> CURRENCY_TYPES = DeferredRegister.create(CURRENCY_KEY, HorizonEconomy.MODID);
+    public static final DeferredRegister<CommodityCategory> COMMODITY_CATEGORIES = DeferredRegister.create(COMMODITY_KEY, HorizonEconomy.MODID);
+    public static final DeferredRegister<LaborType> LABOR_TYPES = DeferredRegister.create(LABOR_KEY, HorizonEconomy.MODID);
+    public static final DeferredRegister<AgriculturalSystem> AGRICULTURAL_SYSTEMS = DeferredRegister.create(AGRI_KEY, HorizonEconomy.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonEconomy.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonEconomy.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonEconomy.MODID);
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE, HorizonEconomy.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonEconomy.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(CURRENCY_KEY).sync(true));
+        event.register(new RegistryBuilder<>(COMMODITY_KEY).sync(true));
+        event.register(new RegistryBuilder<>(LABOR_KEY).sync(true));
+        event.register(new RegistryBuilder<>(AGRI_KEY).sync(true));
+    }
+
+    public static void registerEntityAttributes(EntityAttributeCreationEvent event) {
+        event.put(MERCHANT_CARAVAN.get(), MerchantCaravanEntity.createAttributes().build());
+    }
+
+    static {
+        CurrencyType.registerAll();
+        CommodityCategory.registerAll();
+        LaborType.registerAll();
+        AgriculturalSystem.registerAll();
+        FinancialInstitutions.registerAll();
+    }
+
+    // Entity registration
+    public static final java.util.function.Supplier<EntityType<MerchantCaravanEntity>> MERCHANT_CARAVAN = ENTITY_TYPES.register("merchant_caravan", () -> EntityType.Builder.<MerchantCaravanEntity>of(MerchantCaravanEntity::new, MobCategory.CREATURE).sized(2.0f, 2.5f).build("merchant_caravan"));
+}
+5. Currency System
+File: data/registry/CurrencyType.java
+Defines the stages of currency. The economy engine evaluates trade based on the baseValueMultiplier adjusted for historical inflation.
+code
+Java
+package com.horizonpack.horizoneconomy.data.registry;
+
+import com.horizonpack.horizoneconomy.core.EconomyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CurrencyType(ResourceLocation id, String nameKey, double baseValueMultiplier, boolean isPhysical, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("barter_system", "currency.barter_system", 1.0, false, "stone_age");
+        register("commodity_money_salt", "currency.commodity_salt", 5.0, true, "stone_age");
+        register("commodity_money_grain", "currency.commodity_grain", 2.0, true, "stone_age");
+        register("copper_coin", "currency.copper_coin", 10.0, true, "copper_age");
+        register("silver_coin", "currency.silver_coin", 50.0, true, "iron_age");
+        register("gold_coin", "currency.gold_coin", 500.0, true, "iron_age");
+        register("paper_money", "currency.paper_money", 100.0, true, "medieval");
+        register("bank_note", "currency.bank_note", 1000.0, true, "industrial");
+        register("credit_system", "currency.credit_system", 1.0, false, "industrial");
+        register("digital_currency", "currency.digital_currency", 1.0, false, "modern");
+    }
+
+    private static void register(String id, String key, double value, boolean physical, String age) {
+        EconomyRegistries.CURRENCY_TYPES.register(id, () -> new CurrencyType(
+            ResourceLocation.fromNamespaceAndPath("horizoneconomy", id), key, value, physical, age));
+    }
+}
+Total Currencies registered: 10
+6. Trade Goods & Commodities
+File: data/registry/CommodityCategory.java
+Maps physical item tags to dynamic market prices. Includes an ethical flag for the forced labor system which causes extreme diplomatic penalties in later ages.
+code
+Java
+package com.horizonpack.horizoneconomy.data.registry;
+
+import com.horizonpack.horizoneconomy.core.EconomyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CommodityCategory(ResourceLocation id, String nameKey, double basePrice, double priceVolatility, boolean isEthicallyRestricted) {
+
+    public static void registerAll() {
+        register("raw_materials", "commodity.raw_materials", 5.0, 0.1, false);
+        register("processed_metals", "commodity.processed_metals", 25.0, 0.2, false);
+        register("textiles", "commodity.textiles", 15.0, 0.15, false);
+        register("food_staples", "commodity.food_staples", 3.0, 0.4, false);
+        register("luxury_goods", "commodity.luxury_goods", 150.0, 0.5, false);
+        register("weapons", "commodity.weapons", 75.0, 0.3, false);
+        register("tools", "commodity.tools", 40.0, 0.1, false);
+        register("medicine", "commodity.medicine", 100.0, 0.2, false);
+        register("knowledge", "commodity.knowledge", 200.0, 0.05, false);
+        register("art", "commodity.art", 500.0, 0.8, false);
+        register("fuel", "commodity.fuel", 20.0, 0.6, false);
+        register("livestock", "commodity.livestock", 60.0, 0.25, false);
+        
+        // Historical mechanic: Triggers massive negative diplomatic response from Democracies/Republics.
+        register("forced_labor_system", "commodity.forced_labor", 1000.0, 0.1, true); 
+    }
+
+    private static void register(String id, String key, double price, double volatility, boolean restricted) {
+        EconomyRegistries.COMMODITY_CATEGORIES.register(id, () -> new CommodityCategory(
+            ResourceLocation.fromNamespaceAndPath("horizoneconomy", id), key, price, volatility, restricted));
+    }
+}
+Total Commodities registered: 13
+7. Financial Institutions Registry
+File: core/FinancialInstitutions.java (Helper class within core)
+Registers blocks required for an NPC settlement or player to access higher tiers of the economy.
+code
+Java
+package com.horizonpack.horizoneconomy.core;
+
+import com.horizonpack.horizoneconomy.blocks.*;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class FinancialInstitutions {
+
+    public static final DeferredBlock<Block> MARKET_STALL = EconomyRegistries.BLOCKS.registerBlock("market_stall", () -> new MarketStallBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f).sound(SoundType.WOOD)));
+    public static final DeferredBlock<Block> TRADING_POST = EconomyRegistries.BLOCKS.registerBlock("trading_post", () -> new TradingPostBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(3.0f).sound(SoundType.WOOD)));
+    public static final DeferredBlock<Block> MERCHANT_GUILD = EconomyRegistries.BLOCKS.registerBlock("merchant_guild", () -> new MerchantGuildBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(4.0f).sound(SoundType.STONE)));
+    public static final DeferredBlock<Block> BANK = EconomyRegistries.BLOCKS.registerBlock("bank", () -> new BankBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(5.0f).sound(SoundType.STONE)));
+    public static final DeferredBlock<Block> STOCK_EXCHANGE = EconomyRegistries.BLOCKS.registerBlock("stock_exchange", () -> new StockExchangeBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(6.0f).sound(SoundType.METAL)));
+    public static final DeferredBlock<Block> CENTRAL_BANK = EconomyRegistries.BLOCKS.registerBlock("central_bank", () -> new CentralBankBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(7.0f).sound(SoundType.METAL)));
+    public static final DeferredBlock<Block> INSURANCE_COMPANY = EconomyRegistries.BLOCKS.registerBlock("insurance_company", () -> new InsuranceCompanyBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(4.0f).sound(SoundType.STONE)));
+    public static final DeferredBlock<Block> TAX_OFFICE = EconomyRegistries.BLOCKS.registerBlock("tax_office", () -> new TaxOfficeBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(4.5f).sound(SoundType.STONE)));
+
+    public static void registerAll() {
+        // Called from EconomyRegistries static block
+    }
+}
+Total Financial Institutions registered: 8
+8. Labor & Wage System
+File: data/registry/LaborType.java
+Maps NPC social classes and professions (from horizonsociety) to economic wage brackets and unionization thresholds.
+code
+Java
+package com.horizonpack.horizoneconomy.data.registry;
+
+import com.horizonpack.horizoneconomy.core.EconomyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record LaborType(ResourceLocation id, String nameKey, double baseDailyWage, float unionizationPropensity, String minimumAge) {
+
+    public static void registerAll() {
+        register("unskilled", "labor.unskilled", 5.0, 0.8f, "stone_age");
+        register("skilled_trade", "labor.skilled_trade", 20.0, 0.6f, "copper_age");
+        register("professional", "labor.professional", 75.0, 0.3f, "medieval");
+        register("specialist", "labor.specialist", 150.0, 0.1f, "industrial");
+        register("noble", "labor.noble", 500.0, 0.0f, "bronze_age");
+        register("clergy", "labor.clergy", 100.0, 0.0f, "bronze_age");
+    }
+
+    private static void register(String id, String key, double wage, float union, String age) {
+        EconomyRegistries.LABOR_TYPES.register(id, () -> new LaborType(
+            ResourceLocation.fromNamespaceAndPath("horizoneconomy", id), key, wage, union, age));
+    }
+}
+Total Labor Types registered: 6
+9. Agricultural Systems
+File: data/registry/AgriculturalSystem.java
+Applied to a settlement or farm to determine multi-chunk crop yield modifiers, soil depletion rates, and irrigation requirements.
+code
+Java
+package com.horizonpack.horizoneconomy.data.registry;
+
+import com.horizonpack.horizoneconomy.core.EconomyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record AgriculturalSystem(ResourceLocation id, String nameKey, float yieldMultiplier, float soilDepletionRate, boolean requiresIrrigation, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("slash_and_burn", "agri.slash_and_burn", 0.5f, 3.0f, false, "stone_age");
+        register("subsistence_farming", "agri.subsistence", 1.0f, 1.5f, false, "stone_age");
+        register("crop_rotation_2field", "agri.2field", 1.2f, 1.0f, false, "iron_age");
+        register("crop_rotation_3field", "agri.3field", 1.5f, 0.5f, false, "medieval");
+        register("irrigation_farming", "agri.irrigation", 2.0f, 1.2f, true, "bronze_age");
+        register("terrace_farming", "agri.terrace", 1.8f, 0.8f, true, "iron_age");
+        register("plantation_farming", "agri.plantation", 3.0f, 2.5f, false, "industrial");
+        register("industrial_farming", "agri.industrial", 5.0f, 2.0f, true, "industrial");
+        register("hydroponic_farming", "agri.hydroponic", 10.0f, 0.0f, true, "modern");
+    }
+
+    private static void register(String id, String key, float yield, float depletion, boolean irrigation, String age) {
+        EconomyRegistries.AGRICULTURAL_SYSTEMS.register(id, () -> new AgriculturalSystem(
+            ResourceLocation.fromNamespaceAndPath("horizoneconomy", id), key, yield, depletion, irrigation, age));
+    }
+}
+Total Agricultural Systems registered: 9
+10. Global Market Engine
+File: systems/MarketEngine.java
+Handles the background ticking of price volatility based on global supply/demand shocks from natural disasters (HorizonWorld) or wars (HorizonSociety).
+code
+Java
+package com.horizonpack.horizoneconomy.systems;
+
+import com.horizonpack.horizoneconomy.data.EconomySavedData;
+import com.horizonpack.horizoneconomy.data.registry.CommodityCategory;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+
+import java.util.Map;
+import java.util.Random;
+
+public class MarketEngine {
+
+    public static void init() {}
+
+    public static void tickMarket(ServerLevel level) {
+        EconomySavedData data = EconomySavedData.get(level);
+        Random rand = level.getRandom();
+        
+        // Apply random volatility walk to all commodities
+        for (Map.Entry<ResourceLocation, Double> entry : data.getGlobalPrices().entrySet()) {
+            CommodityCategory category = getCategoryOrNull(level, entry.getKey());
+            if (category == null) continue;
+            
+            double currentPrice = entry.getValue();
+            double volatility = category.priceVolatility();
+            
+            // Random walk: -volatility% to +volatility%
+            double shift = 1.0 + ((rand.nextDouble() * 2.0 - 1.0) * volatility);
+            double newPrice = Math.max(category.basePrice() * 0.1, currentPrice * shift); // Price floor
+            
+            // Revert gently to base price over time
+            newPrice += (category.basePrice() - newPrice) * 0.05; 
+            
+            data.setGlobalPrice(entry.getKey(), newPrice);
+        }
+    }
+    
+    private static CommodityCategory getCategoryOrNull(ServerLevel level, ResourceLocation id) {
+        return level.registryAccess().registryOrThrow(com.horizonpack.horizoneconomy.core.EconomyRegistries.COMMODITY_KEY).get(id);
+    }
+}
+11. World SavedData (Economy State)
+File: data/EconomySavedData.java
+Stores global prices, civilization bank reserves, and player bank accounts. Ensures long values are used to prevent precision loss with fiat inflation.
+code
+Java
+package com.horizonpack.horizoneconomy.data;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class EconomySavedData extends SavedData {
+
+    public static final String DATA_NAME = "horizoneconomy_state";
+
+    private final Map<ResourceLocation, Double> globalPrices = new HashMap<>();
+    private final Map<UUID, Long> bankAccounts = new HashMap<>(); // UUID can be Player or Civilization
+    private double globalInflationRate = 1.0;
+
+    public static EconomySavedData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(EconomySavedData::new, EconomySavedData::load),
+                DATA_NAME
+        );
+    }
+
+    public Map<ResourceLocation, Double> getGlobalPrices() { return globalPrices; }
+    
+    public void setGlobalPrice(ResourceLocation id, double price) {
+        globalPrices.put(id, price);
+        setDirty();
+    }
+
+    public long getBalance(UUID id) { return bankAccounts.getOrDefault(id, 0L); }
+
+    public void adjustBalance(UUID id, long amount) {
+        bankAccounts.put(id, getBalance(id) + amount);
+        setDirty();
+    }
+    
+    public double getInflationRate() { return globalInflationRate; }
+    public void setInflationRate(double rate) { this.globalInflationRate = rate; setDirty(); }
+
+    @Override
+    public @NotNull CompoundTag save(@NotNull CompoundTag tag) {
+        CompoundTag pricesTag = new CompoundTag();
+        globalPrices.forEach((id, price) -> pricesTag.putDouble(id.toString(), price));
+        tag.put("Prices", pricesTag);
+
+        ListTag accountsTag = new ListTag();
+        bankAccounts.forEach((uuid, balance) -> {
+            CompoundTag acc = new CompoundTag();
+            acc.putUUID("UUID", uuid);
+            acc.putLong("Balance", balance);
+            accountsTag.add(acc);
+        });
+        tag.put("Accounts", accountsTag);
+        tag.putDouble("Inflation", globalInflationRate);
+        return tag;
+    }
+
+    public static EconomySavedData load(CompoundTag tag) {
+        EconomySavedData data = new EconomySavedData();
+        CompoundTag pricesTag = tag.getCompound("Prices");
+        for (String key : pricesTag.getAllKeys()) {
+            data.globalPrices.put(ResourceLocation.parse(key), pricesTag.getDouble(key));
+        }
+
+        ListTag accountsTag = tag.getList("Accounts", Tag.TAG_COMPOUND);
+        for (int i = 0; i < accountsTag.size(); i++) {
+            CompoundTag acc = accountsTag.getCompound(i);
+            data.bankAccounts.put(acc.getUUID("UUID"), acc.getLong("Balance"));
+        }
+        
+        data.globalInflationRate = tag.contains("Inflation") ? tag.getDouble("Inflation") : 1.0;
+        return data;
+    }
+}
+12. Entity Implementation (Merchant Caravan)
+File: entities/MerchantCaravanEntity.java
+A roaming trader connecting settlements. Uses BaseVehicleEntity physics if absorbed from HorizonPower, otherwise a standard pathfinding mob.
+code
+Java
+package com.horizonpack.horizoneconomy.entities;
+
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.FloatGoal;
+import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
+import net.minecraft.world.level.Level;
+
+public class MerchantCaravanEntity extends PathfinderMob {
+
+    public MerchantCaravanEntity(EntityType<? extends PathfinderMob> type, Level level) {
+        super(type, level);
+    }
+
+    @Override
+    protected void registerGoals() {
+        this.goalSelector.addGoal(0, new FloatGoal(this));
+        // Pathfinds between Settlement coordinates provided by HorizonSociety
+        this.goalSelector.addGoal(1, new WaterAvoidingRandomStrollGoal(this, 1.0D)); 
+    }
+
+    public static AttributeSupplier.Builder createAttributes() {
+        return PathfinderMob.createMobAttributes()
+                .add(Attributes.MAX_HEALTH, 100.0D)
+                .add(Attributes.MOVEMENT_SPEED, 0.25D)
+                .add(Attributes.KNOCKBACK_RESISTANCE, 0.8D);
+    }
+}
+13. Block & Item Registry
+13.1 BankBlock
+File: blocks/BankBlock.java
+code
+Java
+package com.horizonpack.horizoneconomy.blocks;
+
+import com.horizonpack.horizoneconomy.blockentities.BankBlockEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import org.jetbrains.annotations.Nullable;
+
+public class BankBlock extends BaseEntityBlock {
+    public BankBlock(Properties properties) {
+        super(properties);
+    }
+
+    @Override
+    public RenderShape getRenderShape(BlockState state) {
+        return RenderShape.MODEL;
+    }
+
+    @Nullable
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new BankBlockEntity(pos, state);
+    }
+
+    @Override
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
+        if (!level.isClientSide && player instanceof ServerPlayer serverPlayer) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be instanceof BankBlockEntity bank) {
+                serverPlayer.openMenu(bank, pos);
+                return InteractionResult.CONSUME;
+            }
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+}
+13.2 BankNoteItem
+File: items/BankNoteItem.java
+code
+Java
+package com.horizonpack.horizoneconomy.items;
+
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+
+import java.util.List;
+
+public class BankNoteItem extends Item {
+    private final long denomination;
+
+    public BankNoteItem(Properties properties, long denomination) {
+        super(properties);
+        this.denomination = denomination;
+    }
+
+    public long getDenomination() {
+        return denomination;
+    }
+
+    @Override
+    public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
+        tooltip.add(Component.translatable("tooltip.horizoneconomy.bank_note.value", denomination));
+        super.appendHoverText(stack, context, tooltip, flag);
+    }
+}
+13.3 Auto-register Items (EconomyRegistries)
+Appended to EconomyRegistries.java:
+code
+Java
+public static final DeferredItem<Item> COPPER_COIN = ITEMS.registerSimpleItem("copper_coin", new Item.Properties().stacksTo(64));
+    public static final DeferredItem<Item> SILVER_COIN = ITEMS.registerSimpleItem("silver_coin", new Item.Properties().stacksTo(64));
+    public static final DeferredItem<Item> GOLD_COIN = ITEMS.registerSimpleItem("gold_coin", new Item.Properties().stacksTo(64));
+    public static final DeferredItem<Item> BANK_NOTE_100 = ITEMS.register("bank_note_100", () -> new BankNoteItem(new Item.Properties().stacksTo(64), 100));
+    public static final DeferredItem<Item> CREDIT_CARD = ITEMS.registerSimpleItem("credit_card", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> COMMODITY_CONTRACT = ITEMS.registerSimpleItem("commodity_contract", new Item.Properties().stacksTo(1));
+14. Block Entities
+14.1 BankBlockEntity
+File: blockentities/BankBlockEntity.java
+A physical interface to the global EconomySavedData. Contains a localized vault for physical storage of ingots/coins if the player plays in a pre-fiat age.
+code
+Java
+package com.horizonpack.horizoneconomy.blockentities;
+
+import com.horizonpack.horizoneconomy.core.EconomyRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.items.ItemStackHandler;
+import org.jetbrains.annotations.Nullable;
+
+public class BankBlockEntity extends BlockEntity implements MenuProvider {
+
+    public final ItemStackHandler vaultInventory = new ItemStackHandler(27) {
+        @Override
+        protected void onContentsChanged(int slot) {
+            setChanged();
+        }
+    };
+    
+    private long physicalCashReserves = 0L;
+
+    public BankBlockEntity(BlockPos pos, BlockState state) {
+        super(EconomyRegistries.BLOCK_ENTITIES.getEntries().stream()
+                .filter(r -> r.getId().getPath().equals("bank")).findFirst().get().get(), pos, state);
+    }
+
+    public void depositPhysicalCash(long amount) {
+        this.physicalCashReserves += amount;
+        setChanged();
+    }
+    
+    public boolean withdrawPhysicalCash(long amount) {
+        if (this.physicalCashReserves >= amount) {
+            this.physicalCashReserves -= amount;
+            setChanged();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.put("Vault", vaultInventory.serializeNBT(registries));
+        tag.putLong("CashReserves", physicalCashReserves);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("Vault")) vaultInventory.deserializeNBT(registries, tag.getCompound("Vault"));
+        this.physicalCashReserves = tag.getLong("CashReserves");
+    }
+
+    @Override
+    public Component getDisplayName() {
+        return Component.translatable("block.horizoneconomy.bank");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player player) {
+        // Return null for brevity; in full UI this returns BankMenu container
+        return null;
+    }
+}
+15. Event Hooks
+File: events/EconomyEventHandlers.java
+Listens to DayAdvanceEvent from horizoncore to run macro-economic calculations.
+code
+Java
+package com.horizonpack.horizoneconomy.events;
+
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizoneconomy.core.HorizonEconomy;
+import com.horizonpack.horizoneconomy.systems.MarketEngine;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+
+@Mod.EventBusSubscriber(modid = HorizonEconomy.MODID)
+public class EconomyEventHandlers {
+
+    @SubscribeEvent
+    public static void onDayAdvance(DayAdvanceEvent event) {
+        if (event.level() instanceof ServerLevel level) {
+            // Recalculate global prices daily
+            MarketEngine.tickMarket(level);
+            
+            // Execute Labor wages, taxation, etc.
+            // LaborEngine.payDailyWages(level);
+            // BankingEngine.accrueInterest(level);
+        }
+    }
+}
+16. Network Packets
+File: network/packets/MarketTransactionPacket.java
+Handles a player buying/selling from the global market via the Stock Exchange block UI.
+code
+Java
+package com.horizonpack.horizoneconomy.network.packets;
+
+import com.horizonpack.horizoneconomy.core.HorizonEconomy;
+import com.horizonpack.horizoneconomy.data.EconomySavedData;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record MarketTransactionPacket(ResourceLocation commodityId, int amount, boolean isBuy) implements CustomPacketPayload {
+
+    public static final Type<MarketTransactionPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonEconomy.MODID, "market_transaction"));
+
+    public static final StreamCodec<ByteBuf, MarketTransactionPacket> STREAM_CODEC = StreamCodec.composite(
+        ResourceLocation.STREAM_CODEC, MarketTransactionPacket::commodityId,
+        ByteBufCodecs.INT, MarketTransactionPacket::amount,
+        ByteBufCodecs.BOOL, MarketTransactionPacket::isBuy,
+        MarketTransactionPacket::new
+    );
+
+    @Override
+    public Type<MarketTransactionPacket> type() { return TYPE; }
+
+    public static void handleServer(MarketTransactionPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.server.level.ServerPlayer player = (net.minecraft.server.level.ServerPlayer) context.player();
+            EconomySavedData data = EconomySavedData.get(player.serverLevel());
+            double price = data.getGlobalPrices().getOrDefault(packet.commodityId(), 10.0);
+            long totalCost = (long)(price * packet.amount());
+            
+            long balance = data.getBalance(player.getUUID());
+            if (packet.isBuy() && balance >= totalCost) {
+                data.adjustBalance(player.getUUID(), -totalCost);
+                // Give commodity item to player inventory...
+            } else if (!packet.isBuy()) {
+                // Consume commodity item, give cash
+                data.adjustBalance(player.getUUID(), totalCost);
+            }
+        });
+    }
+}
+17. Configuration
+File: core/EconomyConfig.java
+code
+Java
+package com.horizonpack.horizoneconomy.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class EconomyConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue marketVolatilityMultiplier;
+        public final ModConfigSpec.BooleanValue enableInflation;
+        public final ModConfigSpec.DoubleValue baseTaxRate;
+        public final ModConfigSpec.BooleanValue allowForcedLabor;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("markets");
+            marketVolatilityMultiplier = builder.comment("Scales price swings during crashes").defineInRange("marketVolatilityMultiplier", 1.0, 0.0, 5.0);
+            enableInflation = builder.comment("Fiat currency loses value over time").define("enableInflation", true);
+            builder.pop();
+
+            builder.push("society");
+            baseTaxRate = builder.comment("Base tax collected daily per employed NPC").defineInRange("baseTaxRate", 0.05, 0.0, 1.0);
+            allowForcedLabor = builder.comment("Enable historical forced labor systems. Disabling reverts all such economies to unskilled labor.").define("allowForcedLabor", true);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showMarketTickerHUD;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showMarketTickerHUD = builder.comment("Shows scrolling market prices on HUD").define("showMarketTickerHUD", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+18. Data Pack Integration
+All economies, currencies, agricultural methods, and labor ties are strictly registered via Custom Registries described in Section 4. Submods and pack developers can override base prices or historical progression points via standard data pack overwrites.
+19. Blockstate & Model JSONs
+19.1 Bank Block Blockstate
+assets/horizoneconomy/blockstates/bank.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizoneconomy:block/bank" }
+  }
+}
+19.2 Bank Block Model
+assets/horizoneconomy/models/block/bank.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "minecraft:block/smooth_stone",
+    "side": "horizoneconomy:block/bank_side"
+  }
+}
+19.3 Gold Coin Item Model
+assets/horizoneconomy/models/item/gold_coin.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizoneconomy:item/gold_coin"
+  }
+}
+20. Recipe JSONs
+20.1 Minting Gold Coins (Anvil Recipe via JSON structure, or Forge)
+Because coinage requires precision, it is done via the horizoncraft forge/workbench. Here is a shapeless approximation using vanilla JSON for integration.
+data/horizoneconomy/recipes/gold_coin.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shapeless",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "iron_age" }
+  ],
+  "ingredients": [
+    { "item": "minecraft:gold_nugget" },
+    { "item": "minecraft:gold_nugget" }
+  ],
+  "result": {
+    "id": "horizoneconomy:gold_coin",
+    "count": 10
+  }
+}
+21. Loot Table JSONs
+21.1 Bank Block Drop
+data/horizoneconomy/loot_tables/blocks/bank.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizoneconomy:bank",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "source": "block_entity",
+              "include": ["horizoneconomy:vault", "horizoneconomy:cash_reserves"]
+            }
+          ]
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+22. Tag JSONs
+22.1 Trade Commodities (Raw Materials)
+data/horizoneconomy/tags/items/commodities/raw_materials.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "minecraft:iron_ore",
+    "minecraft:gold_ore",
+    "minecraft:copper_ore",
+    "horizondata:raw_tin",
+    "horizondata:raw_silver",
+    "minecraft:coal",
+    "#minecraft:logs"
+  ]
+}
+22.2 Currency Items
+data/horizoneconomy/tags/items/currency.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizoneconomy:copper_coin",
+    "horizoneconomy:silver_coin",
+    "horizoneconomy:gold_coin",
+    "horizoneconomy:bank_note_100",
+    "horizoneconomy:credit_card"
+  ]
+}
+23. Lang / Localization
+assets/horizoneconomy/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizoneconomy.finance": "HorizonEconomy - Finance & Trade",
+
+  "block.horizoneconomy.market_stall": "Market Stall",
+  "block.horizoneconomy.trading_post": "Trading Post",
+  "block.horizoneconomy.merchant_guild": "Merchant Guild",
+  "block.horizoneconomy.bank": "Bank",
+  "block.horizoneconomy.stock_exchange": "Stock Exchange",
+  "block.horizoneconomy.central_bank": "Central Bank",
+  "block.horizoneconomy.insurance_company": "Insurance Company",
+  "block.horizoneconomy.tax_office": "Tax Office",
+  "block.horizoneconomy.irrigation_controller": "Irrigation Controller",
+
+  "item.horizoneconomy.copper_coin": "Copper Coin",
+  "item.horizoneconomy.silver_coin": "Silver Coin",
+  "item.horizoneconomy.gold_coin": "Gold Coin",
+  "item.horizoneconomy.bank_note_100": "100-Value Bank Note",
+  "item.horizoneconomy.credit_card": "Credit Card",
+  "item.horizoneconomy.commodity_contract": "Commodity Contract",
+
+  "currency.barter_system": "Barter System",
+  "currency.commodity_salt": "Salt Economy",
+  "currency.commodity_grain": "Grain Economy",
+  "currency.copper_coin": "Copper Standard",
+  "currency.silver_coin": "Silver Standard",
+  "currency.gold_coin": "Gold Standard",
+  "currency.paper_money": "Paper Fiat",
+  "currency.bank_note": "Bank Notes",
+  "currency.credit_system": "Credit System",
+  "currency.digital_currency": "Digital Currency",
+
+  "commodity.raw_materials": "Raw Materials",
+  "commodity.processed_metals": "Processed Metals",
+  "commodity.textiles": "Textiles",
+  "commodity.food_staples": "Food Staples",
+  "commodity.luxury_goods": "Luxury Goods",
+  "commodity.weapons": "Weapons & Arms",
+  "commodity.tools": "Tools & Machinery",
+  "commodity.medicine": "Medicine",
+  "commodity.knowledge": "Knowledge & Blueprints",
+  "commodity.art": "Art & Antiquities",
+  "commodity.fuel": "Combustible Fuels",
+  "commodity.livestock": "Livestock",
+  "commodity.forced_labor": "Forced Labor (Ethical Restriction)",
+
+  "labor.unskilled": "Unskilled Labor",
+  "labor.skilled_trade": "Skilled Trade",
+  "labor.professional": "Professional",
+  "labor.specialist": "Specialist",
+  "labor.noble": "Nobility",
+  "labor.clergy": "Clergy",
+
+  "agri.slash_and_burn": "Slash and Burn",
+  "agri.subsistence": "Subsistence Farming",
+  "agri.2field": "Two-Field Rotation",
+  "agri.3field": "Three-Field Rotation",
+  "agri.irrigation": "Irrigation Farming",
+  "agri.terrace": "Terrace Farming",
+  "agri.plantation": "Plantation Agriculture",
+  "agri.industrial": "Industrial Agriculture",
+  "agri.hydroponic": "Hydroponics",
+
+  "tooltip.horizoneconomy.bank_note.value": "Value: %d",
+  "gui.horizoneconomy.market.buy": "Buy",
+  "gui.horizoneconomy.market.sell": "Sell",
+
+  "advancements.horizoneconomy.root.title": "Wealth of Nations",
+  "advancements.horizoneconomy.root.desc": "Accumulate your first global currency.",
+  "advancements.horizoneconomy.stock_exchange.title": "Wolf of Wall Street",
+  "advancements.horizoneconomy.stock_exchange.desc": "Build a Stock Exchange."
+}
+24. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizoneconomy'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizoneconomy', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonbiome:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+25. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizoneconomy"
+    version = "1.0.0"
+    displayName = "Horizon Economy"
+    description = """
+The global market, labor, financial, and agricultural scaling engine for the Horizon Corebreach modpack.
+Simulates currency evolution, stock markets, labor strikes, and macro-farming systems.
+"""
+    logoFile = "horizoneconomy.png"
+
+[[dependencies.horizoneconomy]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizoneconomy]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizoneconomy]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoneconomy]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoneconomy]]
+    modId = "horizonbiome"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoneconomy]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+26. Critical Implementation Notes
+Floating Point Precision for Fiat Currency:
+Never use float or double for direct bank account balances, as fiat currencies inherently inflate to thousands or millions of units causing precision loss. The BankBlockEntity and EconomySavedData must strictly utilize long values to represent atomic currency units, with UI overlays mapping it against the globalInflationRate.
+Market Evaluation Threading:
+Calculating supply and demand against millions of simulated units inside MarketEngine cannot be handled on the main server thread. MarketEngine.tickMarket() should farm intensive calculations to net.minecraft.Util.backgroundExecutor() using CompletableFuture, then sync results back via thread-safe atomic updates to the EconomySavedData.
+Data Component Migration for NBT Items:
+Items like CommodityContractItem or CreditCardItem inherently store unique balances and ownership hashes. Under NeoForge 1.21.1, do not use getOrCreateTag(). Define a Custom Data Component via DeferredRegister.DataComponents to strictly serialize these values safely and ensure stack comparisons behave.
+Offline Economy Simulation:
+To ensure the global economy does not stagnate while chunks are unloaded, EconomySavedData relies entirely on a day-tick mathematical update rather than specific chunk entities. Stock crashes, inflation, and demand shocks apply mathematically on the DayAdvanceEvent rather than waiting for players to load specific cities.
+Historical Forced Labor Ethics (ESRB Compliance):
+The forced_labor_system commodity exists mechanically as it was the reality of the ancient/medieval eras. However, the isEthicallyRestricted flag exists in CommodityCategory. Under horizonsociety, any Civilization with the Democracy or Republic type will permanently default to -100 Hostile Reputation if a neighboring empire or player engages in this commodity, triggering emancipatory declarations of war. Furthermore, the allowForcedLabor boolean inside EconomyConfig allows server operators to completely disable this layer, converting those economic nodes into generic unskilled_labor.
+Labor Strike Cascade:
+Labor forces check their assigned wages vs global inflation. If real wages dip beneath the baseDailyWage threshold dictated by the LaborType registry, the StrikeStartEvent triggers, instantly halting MachineBlockEntity and AgriculturalSystem yields in the affected region.
+Agricultural Controller & Chunk Loading:
+The IrrigationControllerBlockEntity scans connected horizonbiome:crop instances up to a radius of 64 blocks to apply the AgriculturalSystem modifier. Given chunk loading limits, this scan must abort or pause gracefully if the adjacent farm chunk unloads to prevent OutOfMemory chunk-thrashing leaks.
+Merchant Caravan Pathfinding:
+The MerchantCaravanEntity must safely pathfind distances larger than loaded chunks. This is handled by transferring the entity to a virtual TradeNetworkEngine (despawning it) while it crosses unloaded chunks, then respawning the entity at the destination settlement border upon arrival calculation.

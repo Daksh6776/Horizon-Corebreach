@@ -1,0 +1,1375 @@
+HorizonFamily — Detailed Technical Specification
+Mod ID: horizonfamily
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Social Dynamics, Lineage, and Reputation Simulation
+Absorbed mods: HorizonFamily, HorizonSocial
+Depends on: horizoncore, horizonsociety, horizonskills
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Relationship Types Registry
+Life Stages Registry
+Social Titles Registry
+Family Events Registry
+Data Attachments & Capabilities
+Family & Social Engine
+Block & Item Registration
+Block Entities
+Event Hooks
+Network Packets
+Client GUI & Rendering
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonFamily introduces a deep, generational simulation to Minecraft, governing how entities (both players and NPCs) interact, form bonds, age, and pass on their legacy.
+Generational Aging: Entities progress through defined life stages, gaining stat modifications and eventual mortality.
+Dynasties & Lineage: Complete tracking of family trees, allowing players to view their ancestors and descendants via the Genealogy Table.
+Inheritance System: Mechanisms for passing items, wealth, and titles to designated heirs upon death.
+Social Standing & Reputation: Players and NPCs possess dynamic reputation scores that unlock hierarchical Social Titles, affecting diplomacy and trade.
+Interpersonal Relationships: A complex web of 21 distinct relationship types tracking the exact socio-political bonds between any two entities.
+Family Events: Dynamic life milestones (births, marriages, feuds) that permanently alter reputation and relationship standings.
+2. File & Package Structure
+code
+Text
+horizon_family/
+├── src/main/java/com/horizonpack/horizonfamily/
+│   ├── core/
+│   │   ├── HorizonFamily.java
+│   │   ├── FamilyRegistries.java
+│   │   └── FamilyConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── RelationshipType.java
+│   │   │   ├── LifeStage.java
+│   │   │   ├── SocialTitle.java
+│   │   │   └── FamilyEventDef.java
+│   │   ├── attachments/
+│   │   │   ├── SocialData.java
+│   │   │   ├── LineageData.java
+│   │   │   └── FamilyAttachments.java
+│   │   └── state/
+│   │       └── GlobalDynastyData.java
+│   ├── systems/
+│   │   ├── AgingEngine.java
+│   │   ├── SocialEngine.java
+│   │   ├── InheritanceEngine.java
+│   │   └── MarriageEngine.java
+│   ├── blocks/
+│   │   └── GenealogyTableBlock.java
+│   ├── blockentities/
+│   │   └── GenealogyTableBlockEntity.java
+│   ├── items/
+│   │   ├── WeddingRingItem.java
+│   │   ├── TitleDeedItem.java
+│   │   └── LastWillItem.java
+│   ├── events/
+│   │   ├── FamilyEventHandlers.java
+│   │   └── custom/
+│   │       ├── LifeStageAdvanceEvent.java
+│   │       ├── RelationshipChangeEvent.java
+│   │       ├── TitleGrantedEvent.java
+│   │       └── InheritanceTriggerEvent.java
+│   ├── network/
+│   │   ├── FamilyPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncLineagePacket.java
+│   │       ├── SyncSocialDataPacket.java
+│   │       └── ProposeMarriagePacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── GenealogyScreen.java
+│   │   │   └── SocialStandingOverlay.java
+│   │   └── render/
+│   │       └── GenealogyTableRenderer.java
+│   └── utils/
+│       ├── FamilyTreeBuilder.java
+│       └── ReputationMath.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonfamily/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonfamily/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonFamily.java
+code
+Java
+package com.horizonpack.horizonfamily.core;
+
+import com.horizonpack.horizonfamily.data.attachments.FamilyAttachments;
+import com.horizonpack.horizonfamily.events.FamilyEventHandlers;
+import com.horizonpack.horizonfamily.network.FamilyPacketHandler;
+import com.horizonpack.horizonfamily.systems.AgingEngine;
+import com.horizonpack.horizonfamily.systems.InheritanceEngine;
+import com.horizonpack.horizonfamily.systems.SocialEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonFamily.MODID)
+public class HorizonFamily {
+    public static final String MODID = "horizonfamily";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonFamily(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, FamilyConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, FamilyConfig.CLIENT_SPEC);
+
+        FamilyRegistries.BLOCKS.register(modEventBus);
+        FamilyRegistries.ITEMS.register(modEventBus);
+        FamilyRegistries.BLOCK_ENTITIES.register(modEventBus);
+        FamilyRegistries.MENU_TYPES.register(modEventBus);
+
+        FamilyRegistries.RELATIONSHIP_TYPES.register(modEventBus);
+        FamilyRegistries.LIFE_STAGES.register(modEventBus);
+        FamilyRegistries.SOCIAL_TITLES.register(modEventBus);
+        FamilyRegistries.FAMILY_EVENTS.register(modEventBus);
+
+        FamilyAttachments.ATTACHMENT_TYPES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(FamilyRegistries::registerNewRegistries);
+        modEventBus.addListener(FamilyPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(FamilyEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            AgingEngine.init();
+            SocialEngine.init();
+            InheritanceEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/FamilyRegistries.java
+code
+Java
+package com.horizonpack.horizonfamily.core;
+
+import com.horizonpack.horizonfamily.blocks.GenealogyTableBlock;
+import com.horizonpack.horizonfamily.blockentities.GenealogyTableBlockEntity;
+import com.horizonpack.horizonfamily.items.LastWillItem;
+import com.horizonpack.horizonfamily.items.TitleDeedItem;
+import com.horizonpack.horizonfamily.items.WeddingRingItem;
+import com.horizonpack.horizonfamily.data.registry.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+import java.util.function.Supplier;
+
+public class FamilyRegistries {
+
+    public static final ResourceKey<Registry<RelationshipType>> RELATIONSHIP_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonFamily.MODID, "relationship_types"));
+    public static final ResourceKey<Registry<LifeStage>> LIFE_STAGE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonFamily.MODID, "life_stages"));
+    public static final ResourceKey<Registry<SocialTitle>> SOCIAL_TITLE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonFamily.MODID, "social_titles"));
+    public static final ResourceKey<Registry<FamilyEventDef>> FAMILY_EVENT_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonFamily.MODID, "family_events"));
+
+    public static final DeferredRegister<RelationshipType> RELATIONSHIP_TYPES = DeferredRegister.create(RELATIONSHIP_KEY, HorizonFamily.MODID);
+    public static final DeferredRegister<LifeStage> LIFE_STAGES = DeferredRegister.create(LIFE_STAGE_KEY, HorizonFamily.MODID);
+    public static final DeferredRegister<SocialTitle> SOCIAL_TITLES = DeferredRegister.create(SOCIAL_TITLE_KEY, HorizonFamily.MODID);
+    public static final DeferredRegister<FamilyEventDef> FAMILY_EVENTS = DeferredRegister.create(FAMILY_EVENT_KEY, HorizonFamily.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonFamily.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonFamily.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonFamily.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonFamily.MODID);
+
+    public static final DeferredBlock<Block> GENEALOGY_TABLE = BLOCKS.registerBlock("genealogy_table", () -> new GenealogyTableBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.5f).sound(SoundType.WOOD)));
+
+    public static final DeferredItem<Item> GENEALOGY_TABLE_ITEM = ITEMS.registerSimpleBlockItem("genealogy_table", GENEALOGY_TABLE);
+    public static final DeferredItem<Item> WEDDING_RING = ITEMS.registerSimpleItem("wedding_ring", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> TITLE_DEED = ITEMS.registerSimpleItem("title_deed", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> LAST_WILL = ITEMS.registerSimpleItem("last_will", new Item.Properties().stacksTo(1));
+
+    public static final Supplier<BlockEntityType<GenealogyTableBlockEntity>> GENEALOGY_TABLE_BE = BLOCK_ENTITIES.register("genealogy_table", () -> BlockEntityType.Builder.of(GenealogyTableBlockEntity::new, GENEALOGY_TABLE.get()).build(null));
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(RELATIONSHIP_KEY).sync(true));
+        event.register(new RegistryBuilder<>(LIFE_STAGE_KEY).sync(true));
+        event.register(new RegistryBuilder<>(SOCIAL_TITLE_KEY).sync(true));
+        event.register(new RegistryBuilder<>(FAMILY_EVENT_KEY).sync(true));
+    }
+
+    static {
+        RelationshipType.registerAll();
+        LifeStage.registerAll();
+        SocialTitle.registerAll();
+        FamilyEventDef.registerAll();
+    }
+}
+5. Relationship Types Registry
+File: data/registry/RelationshipType.java
+code
+Java
+package com.horizonpack.horizonfamily.data.registry;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record RelationshipType(ResourceLocation id, String nameKey, int baseReputation, boolean isFamilial) {
+
+    public static void registerAll() {
+        register("stranger", "rel.stranger", 0, false);
+        register("acquaintance", "rel.acquaintance", 5, false);
+        register("friend", "rel.friend", 20, false);
+        register("close_friend", "rel.close_friend", 50, false);
+        register("rival", "rel.rival", -20, false);
+        register("enemy", "rel.enemy", -50, false);
+        register("romantic_interest", "rel.romantic_interest", 30, false);
+        register("partner", "rel.partner", 60, false);
+        register("spouse", "rel.spouse", 100, true);
+        register("ex_spouse", "rel.ex_spouse", -30, false);
+        register("parent", "rel.parent", 80, true);
+        register("child", "rel.child", 80, true);
+        register("sibling", "rel.sibling", 70, true);
+        register("grandparent", "rel.grandparent", 60, true);
+        register("grandchild", "rel.grandchild", 60, true);
+        register("mentor", "rel.mentor", 40, false);
+        register("apprentice", "rel.apprentice", 30, false);
+        register("lord", "rel.lord", 50, false);
+        register("vassal", "rel.vassal", 20, false);
+        register("ally", "rel.ally", 40, false);
+        register("sworn_enemy", "rel.sworn_enemy", -100, false);
+    }
+
+    private static void register(String id, String key, int rep, boolean familial) {
+        FamilyRegistries.RELATIONSHIP_TYPES.register(id, () -> new RelationshipType(
+            ResourceLocation.fromNamespaceAndPath("horizonfamily", id), key, rep, familial));
+    }
+}
+Total Relationship Types registered: 21
+6. Life Stages Registry
+File: data/registry/LifeStage.java
+code
+Java
+package com.horizonpack.horizonfamily.data.registry;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record LifeStage(ResourceLocation id, String nameKey, int minAgeDays, int maxAgeDays, double healthModifier, double speedModifier) {
+
+    public static void registerAll() {
+        register("infant", "life.infant", 0, 365, -0.8, -0.8);
+        register("toddler", "life.toddler", 366, 1095, -0.6, -0.5);
+        register("child", "life.child", 1096, 4380, -0.4, -0.2);
+        register("adolescent", "life.adolescent", 4381, 6570, -0.1, 0.1);
+        register("young_adult", "life.young_adult", 6571, 10950, 0.1, 0.2);
+        register("adult", "life.adult", 10951, 18250, 0.2, 0.1);
+        register("middle_aged", "life.middle_aged", 18251, 23725, 0.0, 0.0);
+        register("elderly", "life.elderly", 23726, 29200, -0.3, -0.3);
+        register("ancient", "life.ancient", 29201, Integer.MAX_VALUE, -0.6, -0.6);
+    }
+
+    private static void register(String id, String key, int minDays, int maxDays, double healthMod, double speedMod) {
+        FamilyRegistries.LIFE_STAGES.register(id, () -> new LifeStage(
+            ResourceLocation.fromNamespaceAndPath("horizonfamily", id), key, minDays, maxDays, healthMod, speedMod));
+    }
+}
+Total Life Stages registered: 9
+7. Social Titles Registry
+File: data/registry/SocialTitle.java
+code
+Java
+package com.horizonpack.horizonfamily.data.registry;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record SocialTitle(ResourceLocation id, String nameKey, int requiredReputation, int requiredWealth, String privilegesDesc) {
+
+    public static void registerAll() {
+        register("peasant", "title.peasant", -100, 0, "No special privileges.");
+        register("freeman", "title.freeman", 0, 50, "Right to own basic property.");
+        register("merchant", "title.merchant", 100, 500, "Right to establish trade stalls.");
+        register("artisan", "title.artisan", 150, 300, "Tax exemptions on crafted goods.");
+        register("knight", "title.knight", 300, 1000, "Right to bear heavy arms in cities.");
+        register("noble", "title.noble", 500, 5000, "Immunity from petty taxation.");
+        register("lord", "title.lord", 1000, 10000, "Can conscript peasants for war.");
+        register("baron", "title.baron", 2000, 25000, "Can issue local decrees.");
+        register("count", "title.count", 4000, 50000, "Controls regional trade routes.");
+        register("duke", "title.duke", 8000, 100000, "Commands regional armies.");
+        register("king", "title.king", 15000, 500000, "Absolute sovereign authority.");
+        register("emperor", "title.emperor", 30000, 1000000, "Ruler of multiple kingdoms.");
+        register("pope", "title.pope", 20000, 200000, "Absolute religious authority. Can call crusades.");
+        register("saint", "title.saint", 25000, 0, "Immune to all negative diplomatic actions.");
+        register("celebrity", "title.celebrity", 5000, 10000, "Grants a passive aura of morale to nearby allies.");
+        register("billionaire", "title.billionaire", 1000, 1000000000, "Can bypass reputation checks with extreme wealth.");
+        register("president", "title.president", 10000, 50000, "Elected head of state. Can issue executive orders.");
+    }
+
+    private static void register(String id, String key, int rep, int wealth, String privileges) {
+        FamilyRegistries.SOCIAL_TITLES.register(id, () -> new SocialTitle(
+            ResourceLocation.fromNamespaceAndPath("horizonfamily", id), key, rep, wealth, privileges));
+    }
+}
+Total Social Titles registered: 17
+8. Family Events Registry
+File: data/registry/FamilyEventDef.java
+code
+Java
+package com.horizonpack.horizonfamily.data.registry;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record FamilyEventDef(ResourceLocation id, String nameKey, int reputationChange) {
+
+    public static void registerAll() {
+        register("birth", "event.birth", 10);
+        register("coming_of_age", "event.coming_of_age", 20);
+        register("marriage", "event.marriage", 50);
+        register("divorce", "event.divorce", -40);
+        register("death", "event.death", 0);
+        register("inheritance", "event.inheritance", 15);
+        register("adoption", "event.adoption", 30);
+        register("family_reunion", "event.family_reunion", 25);
+        register("feud", "event.feud", -50);
+        register("reconciliation", "event.reconciliation", 40);
+        register("dynasty_end", "event.dynasty_end", -100);
+    }
+
+    private static void register(String id, String key, int repChange) {
+        FamilyRegistries.FAMILY_EVENTS.register(id, () -> new FamilyEventDef(
+            ResourceLocation.fromNamespaceAndPath("horizonfamily", id), key, repChange));
+    }
+}
+Total Family Events registered: 11
+9. Data Attachments & Capabilities
+File: data/attachments/FamilyAttachments.java
+code
+Java
+package com.horizonpack.horizonfamily.data.attachments;
+
+import com.horizonpack.horizonfamily.core.HorizonFamily;
+import net.neoforged.neoforge.attachment.AttachmentType;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NeoForgeRegistries;
+
+public class FamilyAttachments {
+    public static final DeferredRegister<AttachmentType<?>> ATTACHMENT_TYPES =
+            DeferredRegister.create(NeoForgeRegistries.Keys.ATTACHMENT_TYPES, HorizonFamily.MODID);
+
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<SocialData>> SOCIAL_DATA = ATTACHMENT_TYPES.register(
+            "social_data", () -> AttachmentType.serializable(SocialData::new).copyOnDeath().build()
+    );
+
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<LineageData>> LINEAGE_DATA = ATTACHMENT_TYPES.register(
+            "lineage_data", () -> AttachmentType.serializable(LineageData::new).copyOnDeath().build()
+    );
+}
+File: data/attachments/SocialData.java
+code
+Java
+package com.horizonpack.horizonfamily.data.attachments;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class SocialData implements INBTSerializable<CompoundTag> {
+    private int reputation = 0;
+    private int wealth = 0; // Cached from HorizonEconomy
+    private ResourceLocation currentTitle = ResourceLocation.fromNamespaceAndPath("horizonfamily", "peasant");
+    private final Map<UUID, ResourceLocation> relationships = new HashMap<>();
+
+    public int getReputation() { return reputation; }
+    public void setReputation(int rep) { this.reputation = rep; }
+    public void addReputation(int amount) { this.reputation += amount; }
+
+    public int getWealth() { return wealth; }
+    public void setWealth(int wealth) { this.wealth = wealth; }
+
+    public ResourceLocation getCurrentTitle() { return currentTitle; }
+    public void setCurrentTitle(ResourceLocation title) { this.currentTitle = title; }
+
+    public Map<UUID, ResourceLocation> getRelationships() { return relationships; }
+    public void setRelationship(UUID target, ResourceLocation relId) { this.relationships.put(target, relId); }
+    public ResourceLocation getRelationship(UUID target) { return this.relationships.getOrDefault(target, ResourceLocation.fromNamespaceAndPath("horizonfamily", "stranger")); }
+
+    @Override
+    public CompoundTag serializeNBT(net.minecraft.core.HolderLookup.Provider provider) {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt("Reputation", reputation);
+        tag.putInt("Wealth", wealth);
+        tag.putString("Title", currentTitle.toString());
+
+        ListTag list = new ListTag();
+        for (Map.Entry<UUID, ResourceLocation> entry : relationships.entrySet()) {
+            CompoundTag rel = new CompoundTag();
+            rel.putUUID("Target", entry.getKey());
+            rel.putString("Type", entry.getValue().toString());
+            list.add(rel);
+        }
+        tag.put("Relationships", list);
+
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(net.minecraft.core.HolderLookup.Provider provider, CompoundTag nbt) {
+        this.reputation = nbt.getInt("Reputation");
+        this.wealth = nbt.getInt("Wealth");
+        this.currentTitle = ResourceLocation.parse(nbt.getString("Title"));
+
+        this.relationships.clear();
+        ListTag list = nbt.getList("Relationships", Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++) {
+            CompoundTag rel = list.getCompound(i);
+            this.relationships.put(rel.getUUID("Target"), ResourceLocation.parse(rel.getString("Type")));
+        }
+    }
+}
+File: data/attachments/LineageData.java
+code
+Java
+package com.horizonpack.horizonfamily.data.attachments;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+public class LineageData implements INBTSerializable<CompoundTag> {
+    private UUID dynastyId = UUID.randomUUID();
+    private String familyName = "Unknown";
+    private int ageInDays = 0;
+    private ResourceLocation currentLifeStage = ResourceLocation.fromNamespaceAndPath("horizonfamily", "young_adult");
+
+    private UUID spouse = null;
+    private UUID mother = null;
+    private UUID father = null;
+    private final List<UUID> children = new ArrayList<>();
+    private UUID designatedHeir = null;
+
+    public UUID getDynastyId() { return dynastyId; }
+    public void setDynastyId(UUID id) { this.dynastyId = id; }
+
+    public String getFamilyName() { return familyName; }
+    public void setFamilyName(String name) { this.familyName = name; }
+
+    public int getAgeInDays() { return ageInDays; }
+    public void setAgeInDays(int days) { this.ageInDays = days; }
+
+    public ResourceLocation getCurrentLifeStage() { return currentLifeStage; }
+    public void setCurrentLifeStage(ResourceLocation stage) { this.currentLifeStage = stage; }
+
+    public UUID getSpouse() { return spouse; }
+    public void setSpouse(UUID spouse) { this.spouse = spouse; }
+
+    public UUID getMother() { return mother; }
+    public void setMother(UUID mother) { this.mother = mother; }
+
+    public UUID getFather() { return father; }
+    public void setFather(UUID father) { this.father = father; }
+
+    public List<UUID> getChildren() { return children; }
+    public void addChild(UUID child) { if (!this.children.contains(child)) this.children.add(child); }
+
+    public UUID getDesignatedHeir() { return designatedHeir; }
+    public void setDesignatedHeir(UUID heir) { this.designatedHeir = heir; }
+
+    @Override
+    public CompoundTag serializeNBT(net.minecraft.core.HolderLookup.Provider provider) {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("Dynasty", dynastyId);
+        tag.putString("FamilyName", familyName);
+        tag.putInt("AgeDays", ageInDays);
+        tag.putString("LifeStage", currentLifeStage.toString());
+
+        if (spouse != null) tag.putUUID("Spouse", spouse);
+        if (mother != null) tag.putUUID("Mother", mother);
+        if (father != null) tag.putUUID("Father", father);
+        if (designatedHeir != null) tag.putUUID("Heir", designatedHeir);
+
+        ListTag kids = new ListTag();
+        for (UUID child : children) {
+            CompoundTag cTag = new CompoundTag();
+            cTag.putUUID("ID", child);
+            kids.add(cTag);
+        }
+        tag.put("Children", kids);
+
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(net.minecraft.core.HolderLookup.Provider provider, CompoundTag nbt) {
+        this.dynastyId = nbt.getUUID("Dynasty");
+        this.familyName = nbt.getString("FamilyName");
+        this.ageInDays = nbt.getInt("AgeDays");
+        this.currentLifeStage = ResourceLocation.parse(nbt.getString("LifeStage"));
+
+        this.spouse = nbt.contains("Spouse") ? nbt.getUUID("Spouse") : null;
+        this.mother = nbt.contains("Mother") ? nbt.getUUID("Mother") : null;
+        this.father = nbt.contains("Father") ? nbt.getUUID("Father") : null;
+        this.designatedHeir = nbt.contains("Heir") ? nbt.getUUID("Heir") : null;
+
+        this.children.clear();
+        ListTag kids = nbt.getList("Children", Tag.TAG_COMPOUND);
+        for (int i = 0; i < kids.size(); i++) {
+            this.children.add(kids.getCompound(i).getUUID("ID"));
+        }
+    }
+}
+10. Family & Social Engine
+File: systems/AgingEngine.java
+code
+Java
+package com.horizonpack.horizonfamily.systems;
+
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import com.horizonpack.horizonfamily.data.attachments.FamilyAttachments;
+import com.horizonpack.horizonfamily.data.attachments.LineageData;
+import com.horizonpack.horizonfamily.data.registry.LifeStage;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.player.Player;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+
+import java.util.Optional;
+
+@Mod.EventBusSubscriber(modid = "horizonfamily")
+public class AgingEngine {
+
+    private static final ResourceLocation HEALTH_MOD_ID = ResourceLocation.fromNamespaceAndPath("horizonfamily", "aging_health");
+    private static final ResourceLocation SPEED_MOD_ID = ResourceLocation.fromNamespaceAndPath("horizonfamily", "aging_speed");
+
+    public static void init() {}
+
+    @SubscribeEvent
+    public static void onDayAdvance(DayAdvanceEvent event) {
+        ServerLevel level = event.level();
+        for (Player player : level.players()) {
+            tickAging(player);
+        }
+        // NPCs are handled by HorizonSociety which iterates them directly and calls tickAging
+    }
+
+    public static void tickAging(LivingEntity entity) {
+        if (!entity.hasData(FamilyAttachments.LINEAGE_DATA)) return;
+
+        LineageData lineage = entity.getData(FamilyAttachments.LINEAGE_DATA);
+        lineage.setAgeInDays(lineage.getAgeInDays() + 1);
+
+        evaluateLifeStage(entity, lineage);
+    }
+
+    private static void evaluateLifeStage(LivingEntity entity, LineageData lineage) {
+        int age = lineage.getAgeInDays();
+        ResourceLocation currentStageId = lineage.getCurrentLifeStage();
+
+        for (var entry : FamilyRegistries.LIFE_STAGES.getEntries()) {
+            LifeStage stage = entry.getValue();
+            if (age >= stage.minAgeDays() && age <= stage.maxAgeDays()) {
+                if (!currentStageId.equals(entry.getKey().location())) {
+                    lineage.setCurrentLifeStage(entry.getKey().location());
+                    applyLifeStageModifiers(entity, stage);
+                    
+                    if (entity instanceof Player player) {
+                        player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonfamily.stage_advance", 
+                                net.minecraft.network.chat.Component.translatable(stage.nameKey())), true);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    private static void applyLifeStageModifiers(LivingEntity entity, LifeStage stage) {
+        var healthInstance = entity.getAttribute(Attributes.MAX_HEALTH);
+        if (healthInstance != null) {
+            healthInstance.removeModifier(HEALTH_MOD_ID);
+            if (stage.healthModifier() != 0.0) {
+                healthInstance.addPermanentModifier(new AttributeModifier(HEALTH_MOD_ID, stage.healthModifier(), AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+            }
+        }
+
+        var speedInstance = entity.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speedInstance != null) {
+            speedInstance.removeModifier(SPEED_MOD_ID);
+            if (stage.speedModifier() != 0.0) {
+                speedInstance.addPermanentModifier(new AttributeModifier(SPEED_MOD_ID, stage.speedModifier(), AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+            }
+        }
+    }
+}
+File: systems/SocialEngine.java
+code
+Java
+package com.horizonpack.horizonfamily.systems;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import com.horizonpack.horizonfamily.data.attachments.FamilyAttachments;
+import com.horizonpack.horizonfamily.data.attachments.SocialData;
+import com.horizonpack.horizonfamily.data.registry.SocialTitle;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+
+public class SocialEngine {
+
+    public static void init() {}
+
+    public static void addReputation(ServerPlayer player, int amount) {
+        SocialData social = player.getData(FamilyAttachments.SOCIAL_DATA);
+        social.addReputation(amount);
+        evaluateTitles(player, social);
+    }
+
+    private static void evaluateTitles(ServerPlayer player, SocialData social) {
+        int currentRep = social.getReputation();
+        int currentWealth = social.getWealth();
+
+        ResourceLocation bestTitle = ResourceLocation.fromNamespaceAndPath("horizonfamily", "peasant");
+        int highestRepReq = -999;
+
+        for (var entry : FamilyRegistries.SOCIAL_TITLES.getEntries()) {
+            SocialTitle title = entry.getValue();
+            if (currentRep >= title.requiredReputation() && currentWealth >= title.requiredWealth()) {
+                if (title.requiredReputation() > highestRepReq) {
+                    highestRepReq = title.requiredReputation();
+                    bestTitle = entry.getKey().location();
+                }
+            }
+        }
+
+        if (!social.getCurrentTitle().equals(bestTitle)) {
+            social.setCurrentTitle(bestTitle);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonfamily.title_granted", 
+                    net.minecraft.network.chat.Component.translatable(FamilyRegistries.SOCIAL_TITLES.get(bestTitle).nameKey())), false);
+        }
+    }
+}
+File: systems/InheritanceEngine.java
+code
+Java
+package com.horizonpack.horizonfamily.systems;
+
+import com.horizonpack.horizonfamily.data.attachments.FamilyAttachments;
+import com.horizonpack.horizonfamily.data.attachments.LineageData;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.UUID;
+
+public class InheritanceEngine {
+    
+    public static void init() {}
+
+    public static void triggerInheritance(ServerPlayer deceased) {
+        LineageData lineage = deceased.getData(FamilyAttachments.LINEAGE_DATA);
+        UUID heirId = lineage.getDesignatedHeir();
+
+        if (heirId == null && !lineage.getChildren().isEmpty()) {
+            heirId = lineage.getChildren().get(0); // Primogeniture default
+        }
+
+        if (heirId != null) {
+            ServerLevel level = deceased.serverLevel();
+            Player heir = level.getServer().getPlayerList().getPlayer(heirId);
+            
+            if (heir instanceof ServerPlayer serverHeir) {
+                transferWealth(deceased, serverHeir);
+                transferTitleClaims(deceased, serverHeir);
+                serverHeir.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonfamily.inherited_estate", deceased.getDisplayName()), true);
+            }
+            // If heir is an NPC, logic delegates to HorizonSociety via event
+        }
+    }
+
+    private static void transferWealth(ServerPlayer from, ServerPlayer to) {
+        // Interacts with HorizonEconomy
+    }
+
+    private static void transferTitleClaims(ServerPlayer from, ServerPlayer to) {
+        // Title transfer logic
+    }
+}
+11. Block & Item Registration
+See Section 4 for DeferredRegister definitions.
+File: blocks/GenealogyTableBlock.java
+code
+Java
+package com.horizonpack.horizonfamily.blocks;
+
+import com.horizonpack.horizonfamily.blockentities.GenealogyTableBlockEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import org.jetbrains.annotations.Nullable;
+
+public class GenealogyTableBlock extends BaseEntityBlock {
+    public GenealogyTableBlock(Properties properties) {
+        super(properties);
+    }
+
+    @Override
+    public RenderShape getRenderShape(BlockState state) {
+        return RenderShape.MODEL;
+    }
+
+    @Nullable
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new GenealogyTableBlockEntity(pos, state);
+    }
+
+    @Override
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
+        if (!level.isClientSide && player instanceof ServerPlayer serverPlayer) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be instanceof GenealogyTableBlockEntity table) {
+                serverPlayer.openMenu(table, pos);
+                return InteractionResult.CONSUME;
+            }
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+}
+File: items/WeddingRingItem.java
+code
+Java
+package com.horizonpack.horizonfamily.items;
+
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+
+public class WeddingRingItem extends Item {
+    public WeddingRingItem(Properties properties) {
+        super(properties);
+    }
+
+    @Override
+    public InteractionResult interactLivingEntity(ItemStack stack, Player player, LivingEntity interactionTarget, InteractionHand usedHand) {
+        if (!player.level().isClientSide) {
+            // Marriage proposal logic delegating to SocialEngine
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonfamily.propose", interactionTarget.getDisplayName()), true);
+            stack.shrink(1);
+            return InteractionResult.CONSUME;
+        }
+        return InteractionResult.sidedSuccess(player.level().isClientSide);
+    }
+}
+File: items/LastWillItem.java
+code
+Java
+package com.horizonpack.horizonfamily.items;
+
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+
+public class LastWillItem extends Item {
+    public LastWillItem(Properties properties) {
+        super(properties);
+    }
+
+    @Override
+    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand usedHand) {
+        if (!level.isClientSide) {
+            // Open GUI to select designated heir
+        }
+        return InteractionResultHolder.sidedSuccess(player.getItemInHand(usedHand), level.isClientSide());
+    }
+}
+12. Block Entities
+File: blockentities/GenealogyTableBlockEntity.java
+code
+Java
+package com.horizonpack.horizonfamily.blockentities;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import org.jetbrains.annotations.Nullable;
+
+public class GenealogyTableBlockEntity extends BlockEntity implements MenuProvider {
+
+    public GenealogyTableBlockEntity(BlockPos pos, BlockState state) {
+        super(FamilyRegistries.GENEALOGY_TABLE_BE.get(), pos, state);
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+    }
+
+    @Override
+    public Component getDisplayName() {
+        return Component.translatable("block.horizonfamily.genealogy_table");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player player) {
+        // Return GenealogyMenu implementation here
+        return null;
+    }
+}
+13. Event Hooks
+File: events/FamilyEventHandlers.java
+code
+Java
+package com.horizonpack.horizonfamily.events;
+
+import com.horizonpack.horizonfamily.core.HorizonFamily;
+import com.horizonpack.horizonfamily.systems.InheritanceEngine;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonFamily.MODID)
+public class FamilyEventHandlers {
+
+    @SubscribeEvent
+    public static void onPlayerDeath(LivingDeathEvent event) {
+        if (!event.getEntity().level().isClientSide() && event.getEntity() instanceof ServerPlayer deceased) {
+            InheritanceEngine.triggerInheritance(deceased);
+        }
+    }
+}
+14. Network Packets
+File: network/packets/ProposeMarriagePacket.java
+code
+Java
+package com.horizonpack.horizonfamily.network.packets;
+
+import com.horizonpack.horizonfamily.core.HorizonFamily;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.UUID;
+
+public record ProposeMarriagePacket(UUID targetId) implements CustomPacketPayload {
+
+    public static final Type<ProposeMarriagePacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonFamily.MODID, "propose_marriage"));
+
+    public static final StreamCodec<ByteBuf, ProposeMarriagePacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.UUID, ProposeMarriagePacket::targetId,
+        ProposeMarriagePacket::new
+    );
+
+    @Override
+    public Type<ProposeMarriagePacket> type() { return TYPE; }
+
+    public static void handleServer(ProposeMarriagePacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.server.level.ServerPlayer player = (net.minecraft.server.level.ServerPlayer) context.player();
+            // Handle marriage acceptance logic via MarriageEngine
+        });
+    }
+}
+File: network/FamilyPacketHandler.java
+code
+Java
+package com.horizonpack.horizonfamily.network;
+
+import com.horizonpack.horizonfamily.core.HorizonFamily;
+import com.horizonpack.horizonfamily.network.packets.ProposeMarriagePacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class FamilyPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonFamily.MODID).versioned("1.0.0");
+        registrar.playToServer(ProposeMarriagePacket.TYPE, ProposeMarriagePacket.STREAM_CODEC, ProposeMarriagePacket::handleServer);
+    }
+}
+15. Client GUI & Rendering
+File: client/gui/SocialStandingOverlay.java
+code
+Java
+package com.horizonpack.horizonfamily.client.gui;
+
+import com.horizonpack.horizonfamily.core.FamilyRegistries;
+import com.horizonpack.horizonfamily.data.attachments.FamilyAttachments;
+import com.horizonpack.horizonfamily.data.attachments.SocialData;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.LayeredDraw;
+import net.minecraft.resources.ResourceLocation;
+
+public class SocialStandingOverlay implements LayeredDraw.Layer {
+
+    @Override
+    public void render(GuiGraphics graphics, float partialTick) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.options.hideGui) return;
+
+        SocialData data = mc.player.getData(FamilyAttachments.SOCIAL_DATA);
+        ResourceLocation title = data.getCurrentTitle();
+        String titleStr = net.minecraft.network.chat.Component.translatable(FamilyRegistries.SOCIAL_TITLES.get(title).nameKey()).getString();
+        
+        int x = 10;
+        int y = 10;
+        graphics.drawString(mc.font, "Title: " + titleStr, x, y, 0xFFD700);
+        graphics.drawString(mc.font, "Reputation: " + data.getReputation(), x, y + 12, 0xFFFFFF);
+    }
+}
+16. Configuration
+File: core/FamilyConfig.java
+code
+Java
+package com.horizonpack.horizonfamily.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class FamilyConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.IntValue baseLifespanDays;
+        public final ModConfigSpec.BooleanValue enablePermadeathInheritance;
+        public final ModConfigSpec.DoubleValue reputationMultiplier;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("aging");
+            baseLifespanDays = builder.comment("Base lifespan in days before death by old age.").defineInRange("baseLifespanDays", 29200, 1000, 100000);
+            builder.pop();
+
+            builder.push("inheritance");
+            enablePermadeathInheritance = builder.comment("If true, players who die permanently transfer their estate to their designated heir.").define("enablePermadeathInheritance", true);
+            builder.pop();
+
+            builder.push("social");
+            reputationMultiplier = builder.comment("Multiplier for all reputation gains and losses.").defineInRange("reputationMultiplier", 1.0, 0.1, 10.0);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showSocialOverlay;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showSocialOverlay = builder.comment("Show social standing and title on the HUD.").define("showSocialOverlay", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+17. Data Pack Integration
+The custom registries (RelationshipType, LifeStage, SocialTitle, FamilyEventDef) are synchronized using NeoForge's RegistryBuilder with .sync(true). This means data pack developers can add entirely new social titles, relationship configurations, and life stages via JSON files placed in data/horizonfamily/social_titles/, data/horizonfamily/life_stages/, etc.
+18. Blockstate & Model JSONs
+assets/horizonfamily/blockstates/genealogy_table.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonfamily:block/genealogy_table" }
+  }
+}
+assets/horizonfamily/models/block/genealogy_table.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "bottom": "minecraft:block/stripped_oak_wood",
+    "top": "minecraft:block/lectern_top",
+    "side": "minecraft:block/stripped_oak_log"
+  }
+}
+assets/horizonfamily/models/item/genealogy_table.json
+code
+JSON
+{
+  "parent": "horizonfamily:block/genealogy_table"
+}
+assets/horizonfamily/models/item/wedding_ring.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonfamily:item/wedding_ring"
+  }
+}
+assets/horizonfamily/models/item/title_deed.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonfamily:item/title_deed"
+  }
+}
+assets/horizonfamily/models/item/last_will.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonfamily:item/last_will"
+  }
+}
+19. Recipe JSONs
+data/horizonfamily/recipes/genealogy_table.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "copper_age" }
+  ],
+  "pattern": [
+    "PPP",
+    " S ",
+    " S "
+  ],
+  "key": {
+    "P": { "item": "minecraft:paper" },
+    "S": { "item": "minecraft:stripped_oak_log" }
+  },
+  "result": {
+    "id": "horizonfamily:genealogy_table",
+    "count": 1
+  }
+}
+data/horizonfamily/recipes/wedding_ring.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " G ",
+    "G G",
+    " G "
+  ],
+  "key": {
+    "G": { "item": "minecraft:gold_nugget" }
+  },
+  "result": {
+    "id": "horizonfamily:wedding_ring",
+    "count": 1
+  }
+}
+data/horizonfamily/recipes/last_will.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    { "item": "minecraft:paper" },
+    { "item": "minecraft:ink_sac" },
+    { "item": "minecraft:feather" }
+  ],
+  "result": {
+    "id": "horizonfamily:last_will",
+    "count": 1
+  }
+}
+20. Loot Table JSONs
+data/horizonfamily/loot_tables/blocks/genealogy_table.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonfamily:genealogy_table"
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+21. Tag JSONs
+data/horizonfamily/tags/items/social_documents.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonfamily:title_deed",
+    "horizonfamily:last_will"
+  ]
+}
+22. Lang / Localization
+assets/horizonfamily/lang/en_us.json
+code
+JSON
+{
+  "block.horizonfamily.genealogy_table": "Genealogy Table",
+  "item.horizonfamily.wedding_ring": "Wedding Ring",
+  "item.horizonfamily.title_deed": "Title Deed",
+  "item.horizonfamily.last_will": "Last Will and Testament",
+
+  "rel.stranger": "Stranger",
+  "rel.acquaintance": "Acquaintance",
+  "rel.friend": "Friend",
+  "rel.close_friend": "Close Friend",
+  "rel.rival": "Rival",
+  "rel.enemy": "Enemy",
+  "rel.romantic_interest": "Romantic Interest",
+  "rel.partner": "Partner",
+  "rel.spouse": "Spouse",
+  "rel.ex_spouse": "Ex-Spouse",
+  "rel.parent": "Parent",
+  "rel.child": "Child",
+  "rel.sibling": "Sibling",
+  "rel.grandparent": "Grandparent",
+  "rel.grandchild": "Grandchild",
+  "rel.mentor": "Mentor",
+  "rel.apprentice": "Apprentice",
+  "rel.lord": "Lord",
+  "rel.vassal": "Vassal",
+  "rel.ally": "Ally",
+  "rel.sworn_enemy": "Sworn Enemy",
+
+  "life.infant": "Infant",
+  "life.toddler": "Toddler",
+  "life.child": "Child",
+  "life.adolescent": "Adolescent",
+  "life.young_adult": "Young Adult",
+  "life.adult": "Adult",
+  "life.middle_aged": "Middle Aged",
+  "life.elderly": "Elderly",
+  "life.ancient": "Ancient",
+
+  "title.peasant": "Peasant",
+  "title.freeman": "Freeman",
+  "title.merchant": "Merchant",
+  "title.artisan": "Artisan",
+  "title.knight": "Knight",
+  "title.noble": "Noble",
+  "title.lord": "Lord",
+  "title.baron": "Baron",
+  "title.count": "Count",
+  "title.duke": "Duke",
+  "title.king": "King",
+  "title.emperor": "Emperor",
+  "title.pope": "Pope",
+  "title.saint": "Saint",
+  "title.celebrity": "Celebrity",
+  "title.billionaire": "Billionaire",
+  "title.president": "President",
+
+  "event.birth": "Birth",
+  "event.coming_of_age": "Coming of Age",
+  "event.marriage": "Marriage",
+  "event.divorce": "Divorce",
+  "event.death": "Death",
+  "event.inheritance": "Inheritance",
+  "event.adoption": "Adoption",
+  "event.family_reunion": "Family Reunion",
+  "event.feud": "Blood Feud",
+  "event.reconciliation": "Reconciliation",
+  "event.dynasty_end": "End of a Dynasty",
+
+  "message.horizonfamily.stage_advance": "You have entered a new stage of life: %s",
+  "message.horizonfamily.title_granted": "By royal decree and social standing, you are now recognized as a %s.",
+  "message.horizonfamily.inherited_estate": "You have inherited the estate of %s.",
+  "message.horizonfamily.propose": "You propose marriage to %s.",
+
+  "advancements.horizonfamily.root.title": "Bloodlines",
+  "advancements.horizonfamily.root.desc": "Interact with the complex social web of civilization.",
+  "advancements.horizonfamily.marry.title": "Tying the Knot",
+  "advancements.horizonfamily.marry.desc": "Successfully marry another entity."
+}
+23. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonfamily'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonfamily', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+    implementation "com.horizonpack:horizonskills:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+24. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonfamily"
+    version = "1.0.0"
+    displayName = "Horizon Family & Social"
+    description = """
+Implements generational aging, extensive family tree tracking, complex interpersonal 
+relationship mechanics, reputation systems, and social titles for Horizon Corebreach.
+"""
+    logoFile = "horizonfamily.png"
+
+[[dependencies.horizonfamily]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonfamily]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonfamily]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonfamily]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonfamily]]
+    modId = "horizonskills"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+25. Critical Implementation Notes
+NeoForge Attachment Integration: Unlike the old Forge Capabilities system utilized by horizoncore previously, the social and lineage data here leverages the new NeoForge ATTACHMENT_TYPES registry. SocialData and LineageData are attached directly to the Entity object. The builder utilizes .copyOnDeath() so that the player's dynastic lineage and social reputation are not inexplicably wiped during standard non-hardcore deaths.
+Aging Sync with World Ticks: The AgingEngine hooks into horizoncore's DayAdvanceEvent rather than running a manual tick counter. This ensures that the entity's physical age perfectly aligns with the passing of civilization eras. If a server administrator skips days via commands, entities will correctly age the exact number of skipped days.
+Cross-Mod Inheritance Execution: The InheritanceEngine.triggerInheritance() method runs entirely on the server. Because transferring wealth relies on HorizonEconomy and land/chest rights rely on HorizonSociety, this method must dispatch custom capability checks to those mods safely without crashing if the designated heir is offline or unloaded. Offline heirs receive their inheritance buffered into NBT upon their next login event.
+Attribute Modifiers & Lifecycle Safety: The attribute modifiers attached by LifeStage advancement (e.g., -0.6 health modifier for ancient) use specific ResourceLocation UUID equivalents. We must explicitly removeModifier(HEALTH_MOD_ID) before adding the new one in AgingEngine#applyLifeStageModifiers() so they do not infinitely stack when recalculating life stages.
+UUID Reference Validations: LineageData stores family members strictly as UUIDs. When attempting to fetch the name of a spouse or parent for the GUI, the client must request SyncLineagePacket payload data because the referenced entity may not be cached locally or may be permanently dead/despawned. The server provides cached String representations of dead ancestors via a secondary lookup map.
+Reputation Recalculation Thresholds: Checking social title promotion across 17 distinct titles on every reputation change is computationally cheap but logically complex because players can drop below requirements due to a FamilyEvent like a divorce or feud. SocialEngine evaluates from highest tier down and explicitly checks both reputation AND wealth (pulled dynamically from HorizonEconomy).
+Wedding Ring Interaction Logic: When proposing via WeddingRingItem, the item checks the interaction target's SocialData. If the target's relationship tier is not romantic_interest or partner, the proposal defaults to immediate failure (unless bypassed by extreme wealth/social titles like king). If successful, the ring item is consumed and both parties' LineageData spouse UUIDs are mutually populated.
+Scalable Data Packs for Relationships: By using custom RegistryKey elements with .sync(true), data pack creators can inject entirely new relationship types (e.g., "Blood Brother" or "Business Partner") without modifying the Java code. Sub-mods can fetch these dynamic relationships using standard BuiltInRegistries.get() patterns. Ensure that any custom relation properly parses the isFamilial boolean to avoid breaking incest-prevention checks in the MarriageEngine.

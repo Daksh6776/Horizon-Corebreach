@@ -1,0 +1,1267 @@
+
+HorizonSociety — Detailed Technical Specification
+Mod ID: horizonsociety
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: NPC Civilizations, Politics, Diplomacy, and Espionage
+Absorbed mods: HorizonSociety, HorizonGovernment, HorizonDiplomacy, HorizonEspionage
+Depends on: horizoncore, horizondata, horizonworld, horizonbiome
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Settlement & Civilization Data
+Government & Social Class System
+Personality & AI Director System
+Diplomacy System
+NPC Profession Registry
+Espionage System
+World SavedData
+Entity Implementation
+Block & Item Registry
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonSociety implements a fully autonomous simulation of human (and humanoid) civilizations parallel to the player. It replaces static vanilla villages with dynamic, expanding empires that research technologies, wage wars, form alliances, and manage their economies.
+Dynamic Civilizations: NPCs group into Civilizations that own multiple Settlements. They advance through HorizonAges independently, potentially outpacing the player.
+Government Types: 11 distinct governance models (Tribalism to Corporation) that dictate diplomatic modifiers, military aggression, and internal stability.
+Professions & Social Classes: 34 distinct NPC professions organized into a 7-tier social hierarchy. NPCs perform daily schedules and affect settlement resource output.
+Diplomacy & Treaties: 15 unique diplomatic actions forming a web of relations between civilizations and the player.
+Espionage: Covert operations allowing technology theft, sabotage, and assassination.
+AI Director: Evaluates settlement growth, assigns construction goals, coordinates army movement, and dictates strategic responses to player actions.
+2. File & Package Structure
+code
+Text
+horizon_society/
+├── src/main/java/com/horizonpack/horizonsociety/
+│   ├── core/
+│   │   ├── HorizonSociety.java
+│   │   ├── SocietyRegistries.java
+│   │   └── SocietyConfig.java
+│   ├── data/
+│   │   ├── enums/
+│   │   │   ├── SettlementTier.java
+│   │   │   └── SocialClass.java
+│   │   ├── registry/
+│   │   │   ├── GovernmentType.java
+│   │   │   ├── PersonalityType.java
+│   │   │   ├── DiplomaticActionType.java
+│   │   │   └── ProfessionDefinition.java
+│   │   └── CivilizationData.java
+│   ├── state/
+│   │   ├── SocietySavedData.java
+│   │   ├── Civilization.java
+│   │   ├── Settlement.java
+│   │   ├── DiplomaticRelation.java
+│   │   └── SpyNetwork.java
+│   ├── ai/
+│   │   ├── CivilizationDirector.java
+│   │   ├── DiplomacyEngine.java
+│   │   ├── EspionageEngine.java
+│   │   └── goals/
+│   │       ├── NpcWorkGoal.java
+│   │       ├── NpcSleepGoal.java
+│   │       └── NpcSocializeGoal.java
+│   ├── entities/
+│   │   ├── NpcEntity.java
+│   │   ├── NpcRenderer.java
+│   │   └── NpcModel.java
+│   ├── blocks/
+│   │   ├── EmbassyBlock.java
+│   │   └── IntelligenceDeskBlock.java
+│   ├── blockentities/
+│   │   ├── EmbassyBlockEntity.java
+│   │   └── IntelligenceDeskBlockEntity.java
+│   ├── items/
+│   │   ├── TreatyItem.java
+│   │   └── DossierItem.java
+│   ├── events/
+│   │   ├── SocietyEventHandlers.java
+│   │   └── custom/
+│   │       ├── CivilizationAdvanceEvent.java
+│   │       ├── WarDeclaredEvent.java
+│   │       └── TreatySignedEvent.java
+│   ├── network/
+│   │   ├── SocietyPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncSocietyStatePacket.java
+│   │       └── RequestDiplomacyPacket.java
+│   ├── client/
+│   │   └── gui/
+│   │       ├── EmbassyScreen.java
+│   │       └── IntelligenceScreen.java
+│   └── utils/
+│       ├── ReputationMath.java
+│       └── NameGenerator.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonsociety/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonsociety/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonSociety.java
+code
+Java
+package com.horizonpack.horizonsociety.core;
+
+import com.horizonpack.horizonsociety.events.SocietyEventHandlers;
+import com.horizonpack.horizonsociety.network.SocietyPacketHandler;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonSociety.MODID)
+public class HorizonSociety {
+    public static final String MODID = "horizonsociety";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonSociety(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, SocietyConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, SocietyConfig.CLIENT_SPEC);
+
+        SocietyRegistries.BLOCKS.register(modEventBus);
+        SocietyRegistries.ITEMS.register(modEventBus);
+        SocietyRegistries.BLOCK_ENTITIES.register(modEventBus);
+        SocietyRegistries.ENTITY_TYPES.register(modEventBus);
+        SocietyRegistries.MENU_TYPES.register(modEventBus);
+        
+        SocietyRegistries.GOVERNMENT_TYPES.register(modEventBus);
+        SocietyRegistries.PERSONALITY_TYPES.register(modEventBus);
+        SocietyRegistries.DIPLOMATIC_ACTIONS.register(modEventBus);
+        SocietyRegistries.PROFESSIONS.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(SocietyRegistries::registerNewRegistries);
+        modEventBus.addListener(SocietyRegistries::registerEntityAttributes);
+        modEventBus.addListener(SocietyPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(SocietyEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            com.horizonpack.horizonsociety.ai.CivilizationDirector.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/SocietyRegistries.java
+code
+Java
+package com.horizonpack.horizonsociety.core;
+
+import com.horizonpack.horizonsociety.data.registry.*;
+import com.horizonpack.horizonsociety.blocks.*;
+import com.horizonpack.horizonsociety.blockentities.*;
+import com.horizonpack.horizonsociety.items.*;
+import com.horizonpack.horizonsociety.entities.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class SocietyRegistries {
+
+    public static final ResourceKey<Registry<GovernmentType>> GOV_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSociety.MODID, "government_types"));
+    public static final ResourceKey<Registry<PersonalityType>> PERS_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSociety.MODID, "personality_types"));
+    public static final ResourceKey<Registry<DiplomaticActionType>> DIPLO_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSociety.MODID, "diplomatic_actions"));
+    public static final ResourceKey<Registry<ProfessionDefinition>> PROF_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSociety.MODID, "professions"));
+
+    public static final DeferredRegister<GovernmentType> GOVERNMENT_TYPES = DeferredRegister.create(GOV_KEY, HorizonSociety.MODID);
+    public static final DeferredRegister<PersonalityType> PERSONALITY_TYPES = DeferredRegister.create(PERS_KEY, HorizonSociety.MODID);
+    public static final DeferredRegister<DiplomaticActionType> DIPLOMATIC_ACTIONS = DeferredRegister.create(DIPLO_KEY, HorizonSociety.MODID);
+    public static final DeferredRegister<ProfessionDefinition> PROFESSIONS = DeferredRegister.create(PROF_KEY, HorizonSociety.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonSociety.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonSociety.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonSociety.MODID);
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE, HorizonSociety.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonSociety.MODID);
+
+    public static final DeferredBlock<Block> EMBASSY = BLOCKS.registerBlock("embassy", () -> new EmbassyBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(3.0f)));
+    public static final DeferredBlock<Block> INTELLIGENCE_DESK = BLOCKS.registerBlock("intelligence_desk", () -> new IntelligenceDeskBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.5f)));
+
+    public static final DeferredItem<Item> TREATY = ITEMS.registerSimpleItem("treaty", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> DOSSIER = ITEMS.registerSimpleItem("dossier", new Item.Properties().stacksTo(1));
+
+    public static final java.util.function.Supplier<BlockEntityType<EmbassyBlockEntity>> EMBASSY_BE = BLOCK_ENTITIES.register("embassy", () -> BlockEntityType.Builder.of(EmbassyBlockEntity::new, EMBASSY.get()).build(null));
+    public static final java.util.function.Supplier<BlockEntityType<IntelligenceDeskBlockEntity>> INTELLIGENCE_DESK_BE = BLOCK_ENTITIES.register("intelligence_desk", () -> BlockEntityType.Builder.of(IntelligenceDeskBlockEntity::new, INTELLIGENCE_DESK.get()).build(null));
+
+    public static final java.util.function.Supplier<EntityType<NpcEntity>> NPC = ENTITY_TYPES.register("npc", () -> EntityType.Builder.<NpcEntity>of(NpcEntity::new, MobCategory.CREATURE).sized(0.6F, 1.95F).build("npc"));
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(GOV_KEY).sync(true));
+        event.register(new RegistryBuilder<>(PERS_KEY).sync(true));
+        event.register(new RegistryBuilder<>(DIPLO_KEY).sync(true));
+        event.register(new RegistryBuilder<>(PROF_KEY).sync(true));
+    }
+
+    public static void registerEntityAttributes(EntityAttributeCreationEvent event) {
+        event.put(NPC.get(), NpcEntity.createAttributes().build());
+    }
+
+    // Call individual registry initialization methods below
+    static {
+        com.horizonpack.horizonsociety.data.registry.GovernmentType.registerAll();
+        com.horizonpack.horizonsociety.data.registry.PersonalityType.registerAll();
+        com.horizonpack.horizonsociety.data.registry.DiplomaticActionType.registerAll();
+        com.horizonpack.horizonsociety.data.registry.ProfessionDefinition.registerAll();
+    }
+}
+5. Settlement & Civilization Data
+5.1 Settlement Tier Enum
+File: data/enums/SettlementTier.java
+code
+Java
+package com.horizonpack.horizonsociety.data.enums;
+
+public enum SettlementTier {
+    HUNTER_GATHERER_CAMP(10, 30, "stone_age"),
+    AGRICULTURAL_VILLAGE(50, 200, "copper_age"),
+    TOWN(200, 1000, "iron_age"),
+    CITY_STATE(1000, 5000, "medieval"),
+    INDUSTRIAL_CITY(5000, 20000, "industrial"),
+    METROPOLIS(20000, 1000000, "modern");
+
+    public final int minPopulation;
+    public final int maxPopulation;
+    public final String minimumAgeId;
+
+    SettlementTier(int minPop, int maxPop, String ageId) {
+        this.minPopulation = minPop;
+        this.maxPopulation = maxPop;
+        this.minimumAgeId = ageId;
+    }
+}
+Total Settlement Tiers registered: 6
+6. Government & Social Class System
+6.1 GovernmentType
+File: data/registry/GovernmentType.java
+code
+Java
+package com.horizonpack.horizonsociety.data.registry;
+
+import com.horizonpack.horizonsociety.core.SocietyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record GovernmentType(ResourceLocation id, String nameKey, float aggressionModifier, float tradeModifier, float stabilityModifier, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("tribalism", "gov.tribalism", 1.2f, 0.8f, 0.9f, "stone_age");
+        register("chiefdom", "gov.chiefdom", 1.3f, 0.9f, 1.0f, "copper_age");
+        register("monarchy", "gov.monarchy", 1.5f, 1.0f, 1.2f, "bronze_age");
+        register("feudalism", "gov.feudalism", 1.4f, 0.9f, 1.1f, "medieval");
+        register("theocracy", "gov.theocracy", 1.6f, 0.7f, 1.4f, "iron_age");
+        register("oligarchy", "gov.oligarchy", 1.1f, 1.4f, 1.0f, "iron_age");
+        register("republic", "gov.republic", 1.0f, 1.2f, 1.3f, "iron_age");
+        register("democracy", "gov.democracy", 0.7f, 1.5f, 1.5f, "industrial");
+        register("dictatorship", "gov.dictatorship", 1.8f, 0.6f, 0.8f, "industrial");
+        register("communism", "gov.communism", 1.3f, 0.5f, 1.4f, "industrial");
+        register("corporation", "gov.corporation", 0.8f, 2.0f, 1.1f, "modern");
+    }
+
+    private static void register(String id, String key, float agg, float trd, float stab, String age) {
+        SocietyRegistries.GOVERNMENT_TYPES.register(id, () -> new GovernmentType(
+            ResourceLocation.fromNamespaceAndPath("horizonsociety", id), key, agg, trd, stab, age));
+    }
+}
+Total Government Types registered: 11
+6.2 SocialClass
+File: data/enums/SocialClass.java
+code
+Java
+package com.horizonpack.horizonsociety.data.enums;
+
+public enum SocialClass {
+    SLAVES_SERFS(0.1f),
+    FARMERS_LABORERS(0.3f),
+    ARTISANS_CRAFTSMEN(0.5f),
+    MERCHANTS(0.7f),
+    MILITARY(0.75f),
+    CLERGY(0.85f),
+    NOBLES_ARISTOCRACY(1.0f);
+
+    public final float wealthMultiplier;
+
+    SocialClass(float wealth) {
+        this.wealthMultiplier = wealth;
+    }
+}
+Total Social Classes registered: 7
+7. Personality & AI Director System
+7.1 PersonalityType
+File: data/registry/PersonalityType.java
+code
+Java
+package com.horizonpack.horizonsociety.data.registry;
+
+import com.horizonpack.horizonsociety.core.SocietyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record PersonalityType(ResourceLocation id, String nameKey, float expansionBias, float militaryBias, float tradeBias, float researchBias, float religiousBias) {
+
+    public static void registerAll() {
+        register("expansionist", "pers.expansionist", 2.0f, 1.2f, 0.8f, 0.8f, 0.8f);
+        register("merchant", "pers.merchant", 1.0f, 0.5f, 2.0f, 1.2f, 0.6f);
+        register("isolationist", "pers.isolationist", 0.2f, 1.5f, 0.2f, 1.0f, 1.0f);
+        register("religious", "pers.religious", 1.5f, 1.3f, 0.5f, 0.5f, 2.0f);
+        register("scientific", "pers.scientific", 0.8f, 0.7f, 1.1f, 2.0f, 0.4f);
+        register("militarist", "pers.militarist", 1.5f, 2.0f, 0.5f, 1.0f, 0.8f);
+        register("diplomatic", "pers.diplomatic", 0.6f, 0.4f, 1.5f, 1.1f, 1.0f);
+        register("opportunist", "pers.opportunist", 1.2f, 1.2f, 1.2f, 0.9f, 0.9f);
+    }
+
+    private static void register(String id, String key, float exp, float mil, float trd, float res, float rel) {
+        SocietyRegistries.PERSONALITY_TYPES.register(id, () -> new PersonalityType(
+            ResourceLocation.fromNamespaceAndPath("horizonsociety", id), key, exp, mil, trd, res, rel));
+    }
+}
+Total Personality Types registered: 8
+8. Diplomacy System
+8.1 DiplomaticActionType
+File: data/registry/DiplomaticActionType.java
+code
+Java
+package com.horizonpack.horizonsociety.data.registry;
+
+import com.horizonpack.horizonsociety.core.SocietyRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record DiplomaticActionType(ResourceLocation id, String nameKey, int reputationCost, boolean requiresPeace, boolean causesWar) {
+
+    public static void registerAll() {
+        register("peace_treaty", "diplo.peace_treaty", 0, false, false);
+        register("trade_agreement", "diplo.trade_agreement", 10, true, false);
+        register("military_alliance", "diplo.military_alliance", 50, true, false);
+        register("non_aggression_pact", "diplo.non_aggression_pact", 20, true, false);
+        register("research_agreement", "diplo.research_agreement", 30, true, false);
+        register("royal_marriage", "diplo.royal_marriage", 100, true, false);
+        register("vassalization", "diplo.vassalization", 200, true, false);
+        register("tribute_demand", "diplo.tribute_demand", -20, true, false);
+        register("joint_war", "diplo.joint_war", 40, true, true);
+        register("espionage_agreement", "diplo.espionage_agreement", 30, true, false);
+        register("embargo", "diplo.embargo", -10, true, false);
+        register("sanction", "diplo.sanction", -15, true, false);
+        register("declare_war", "diplo.declare_war", -50, true, true);
+        register("white_peace", "diplo.white_peace", 0, false, false);
+        register("surrender", "diplo.surrender", -100, false, false);
+    }
+
+    private static void register(String id, String key, int rep, boolean reqPeace, boolean causesWar) {
+        SocietyRegistries.DIPLOMATIC_ACTIONS.register(id, () -> new DiplomaticActionType(
+            ResourceLocation.fromNamespaceAndPath("horizonsociety", id), key, rep, reqPeace, causesWar));
+    }
+}
+Total Diplomatic Actions registered: 15
+9. NPC Profession Registry
+9.1 ProfessionDefinition
+File: data/registry/ProfessionDefinition.java
+code
+Java
+package com.horizonpack.horizonsociety.data.registry;
+
+import com.horizonpack.horizonsociety.core.SocietyRegistries;
+import com.horizonpack.horizonsociety.data.enums.SocialClass;
+import net.minecraft.resources.ResourceLocation;
+
+public record ProfessionDefinition(ResourceLocation id, String nameKey, SocialClass socialClass, String workplaceTag) {
+
+    public static void registerAll() {
+        register("miner", "prof.miner", SocialClass.FARMERS_LABORERS, "mineshaft");
+        register("lumberjack", "prof.lumberjack", SocialClass.FARMERS_LABORERS, "lumber_camp");
+        register("farmer", "prof.farmer", SocialClass.FARMERS_LABORERS, "farm");
+        register("shepherd", "prof.shepherd", SocialClass.FARMERS_LABORERS, "pasture");
+        register("fisherman", "prof.fisherman", SocialClass.FARMERS_LABORERS, "docks");
+        register("hunter", "prof.hunter", SocialClass.FARMERS_LABORERS, "hunting_lodge");
+        register("forager", "prof.forager", SocialClass.FARMERS_LABORERS, "wilderness");
+        
+        register("blacksmith", "prof.blacksmith", SocialClass.ARTISANS_CRAFTSMEN, "forge");
+        register("carpentry", "prof.carpenter", SocialClass.ARTISANS_CRAFTSMEN, "workshop");
+        register("tailor", "prof.tailor", SocialClass.ARTISANS_CRAFTSMEN, "tailory");
+        register("potter", "prof.potter", SocialClass.ARTISANS_CRAFTSMEN, "pottery");
+        register("glassblower", "prof.glassblower", SocialClass.ARTISANS_CRAFTSMEN, "glassworks");
+        register("baker", "prof.baker", SocialClass.ARTISANS_CRAFTSMEN, "bakery");
+        register("butcher", "prof.butcher", SocialClass.ARTISANS_CRAFTSMEN, "butchery");
+        register("brewer", "prof.brewer", SocialClass.ARTISANS_CRAFTSMEN, "brewery");
+        
+        register("merchant", "prof.merchant", SocialClass.MERCHANTS, "market");
+        register("innkeeper", "prof.innkeeper", SocialClass.MERCHANTS, "tavern");
+        
+        register("soldier", "prof.soldier", SocialClass.MILITARY, "barracks");
+        register("archer", "prof.archer", SocialClass.MILITARY, "archery_range");
+        register("cavalry", "prof.cavalry", SocialClass.MILITARY, "stables");
+        register("guard", "prof.guard", SocialClass.MILITARY, "guardhouse");
+        
+        register("spy", "prof.spy", SocialClass.MILITARY, "intelligence_desk");
+        register("assassin", "prof.assassin", SocialClass.MILITARY, "hideout");
+        
+        register("scholar", "prof.scholar", SocialClass.CLERGY, "library");
+        register("priest", "prof.priest", SocialClass.CLERGY, "temple");
+        register("teacher", "prof.teacher", SocialClass.CLERGY, "school");
+        register("doctor", "prof.doctor", SocialClass.CLERGY, "hospital");
+        
+        register("engineer", "prof.engineer", SocialClass.NOBLES_ARISTOCRACY, "university");
+        register("architect", "prof.architect", SocialClass.NOBLES_ARISTOCRACY, "planning_office");
+        register("banker", "prof.banker", SocialClass.NOBLES_ARISTOCRACY, "bank");
+        register("lawyer", "prof.lawyer", SocialClass.NOBLES_ARISTOCRACY, "courthouse");
+        register("artist", "prof.artist", SocialClass.NOBLES_ARISTOCRACY, "studio");
+        register("musician", "prof.musician", SocialClass.NOBLES_ARISTOCRACY, "theater");
+        register("actor", "prof.actor", SocialClass.NOBLES_ARISTOCRACY, "theater");
+    }
+
+    private static void register(String id, String key, SocialClass socClass, String workplace) {
+        SocietyRegistries.PROFESSIONS.register(id, () -> new ProfessionDefinition(
+            ResourceLocation.fromNamespaceAndPath("horizonsociety", id), key, socClass, workplace));
+    }
+}
+Total Professions registered: 34
+10. Espionage System
+10.1 EspionageEngine
+File: ai/EspionageEngine.java
+code
+Java
+package com.horizonpack.horizonsociety.ai;
+
+import com.horizonpack.horizonsociety.state.Civilization;
+import com.horizonpack.horizonsociety.state.SpyNetwork;
+import net.minecraft.server.level.ServerLevel;
+
+import java.util.Random;
+import java.util.UUID;
+
+public class EspionageEngine {
+    
+    public enum CovertMission { SURVEILLANCE, THEFT, SABOTAGE, ASSASSINATION, PROPAGANDA, CRYPTOGRAPHY }
+
+    public static void executeMission(ServerLevel level, Civilization attacker, Civilization target, CovertMission mission) {
+        SpyNetwork net = attacker.getSpyNetwork(target.getId());
+        Random rand = level.getRandom();
+        
+        float successChance = (net.getInfiltrationLevel() * 0.1f) - target.getCounterEspionageLevel();
+        successChance = Math.max(0.1f, Math.min(0.9f, successChance));
+        
+        boolean success = rand.nextFloat() < successChance;
+        
+        if (success) {
+            switch(mission) {
+                case SURVEILLANCE -> net.revealIntel(target);
+                case THEFT -> target.stealTechnology(attacker);
+                case SABOTAGE -> target.destroyRandomInfrastructure(level);
+                case ASSASSINATION -> target.killLeader(level);
+                case PROPAGANDA -> target.reduceStability(0.1f);
+                case CRYPTOGRAPHY -> net.breakCodes();
+            }
+            net.addInfiltration(1);
+        } else {
+            // Mission failed, spies caught
+            net.reduceInfiltration(5);
+            target.decreaseReputation(attacker.getId(), 20); // Diplomatic incident
+        }
+    }
+}
+11. World SavedData
+11.1 SocietySavedData
+File: state/SocietySavedData.java
+code
+Java
+package com.horizonpack.horizonsociety.state;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class SocietySavedData extends SavedData {
+    public static final String DATA_NAME = "horizonsociety_data";
+
+    private final Map<UUID, Civilization> civilizations = new HashMap<>();
+
+    public static SocietySavedData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(SocietySavedData::new, SocietySavedData::load),
+                DATA_NAME
+        );
+    }
+
+    public Civilization getCivilization(UUID id) {
+        return civilizations.get(id);
+    }
+    
+    public void addCivilization(Civilization civ) {
+        civilizations.put(civ.getId(), civ);
+        setDirty();
+    }
+    
+    public Map<UUID, Civilization> getAllCivilizations() {
+        return civilizations;
+    }
+
+    @Override
+    public CompoundTag save(CompoundTag tag) {
+        ListTag civList = new ListTag();
+        for (Civilization civ : civilizations.values()) {
+            civList.add(civ.serializeNBT());
+        }
+        tag.put("Civilizations", civList);
+        return tag;
+    }
+
+    public static SocietySavedData load(CompoundTag tag) {
+        SocietySavedData data = new SocietySavedData();
+        ListTag civList = tag.getList("Civilizations", Tag.TAG_COMPOUND);
+        for (int i = 0; i < civList.size(); i++) {
+            Civilization civ = Civilization.deserializeNBT(civList.getCompound(i));
+            data.civilizations.put(civ.getId(), civ);
+        }
+        return data;
+    }
+}
+11.2 Civilization
+File: state/Civilization.java
+code
+Java
+package com.horizonpack.horizonsociety.state;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class Civilization {
+    private UUID id;
+    private String name;
+    private ResourceLocation governmentTypeId;
+    private ResourceLocation personalityTypeId;
+    private String currentAgeId;
+    
+    private final Map<UUID, DiplomaticRelation> relations = new HashMap<>();
+    private final Map<UUID, SpyNetwork> spyNetworks = new HashMap<>();
+    
+    private float stability = 1.0f;
+    private float counterEspionageLevel = 0.1f;
+
+    public Civilization(UUID id, String name, ResourceLocation govId, ResourceLocation persId, String ageId) {
+        this.id = id;
+        this.name = name;
+        this.governmentTypeId = govId;
+        this.personalityTypeId = persId;
+        this.currentAgeId = ageId;
+    }
+
+    public UUID getId() { return id; }
+    public String getName() { return name; }
+    public String getCurrentAgeId() { return currentAgeId; }
+    public void setCurrentAgeId(String age) { this.currentAgeId = age; }
+    
+    public DiplomaticRelation getRelation(UUID otherCiv) {
+        return relations.computeIfAbsent(otherCiv, k -> new DiplomaticRelation(this.id, k));
+    }
+    
+    public SpyNetwork getSpyNetwork(UUID targetCiv) {
+        return spyNetworks.computeIfAbsent(targetCiv, k -> new SpyNetwork(this.id, k));
+    }
+    
+    public void decreaseReputation(UUID otherCiv, int amount) {
+        getRelation(otherCiv).adjustReputation(-amount);
+    }
+    
+    public void reduceStability(float amount) {
+        this.stability = Math.max(0.0f, this.stability - amount);
+    }
+    
+    public float getCounterEspionageLevel() { return counterEspionageLevel; }
+
+    public void stealTechnology(Civilization from) { /* Integration with HorizonCore */ }
+    public void destroyRandomInfrastructure(net.minecraft.server.level.ServerLevel level) { /* Find settlement and break blocks */ }
+    public void killLeader(net.minecraft.server.level.ServerLevel level) { this.reduceStability(0.5f); }
+
+    public CompoundTag serializeNBT() {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("Id", id);
+        tag.putString("Name", name);
+        tag.putString("GovId", governmentTypeId.toString());
+        tag.putString("PersId", personalityTypeId.toString());
+        tag.putString("AgeId", currentAgeId);
+        tag.putFloat("Stability", stability);
+        tag.putFloat("CounterEspionage", counterEspionageLevel);
+        return tag;
+    }
+
+    public static Civilization deserializeNBT(CompoundTag tag) {
+        Civilization civ = new Civilization(
+            tag.getUUID("Id"),
+            tag.getString("Name"),
+            ResourceLocation.parse(tag.getString("GovId")),
+            ResourceLocation.parse(tag.getString("PersId")),
+            tag.getString("AgeId")
+        );
+        civ.stability = tag.getFloat("Stability");
+        civ.counterEspionageLevel = tag.getFloat("CounterEspionage");
+        return civ;
+    }
+}
+12. Entity Implementation
+12.1 NpcEntity
+File: entities/NpcEntity.java
+code
+Java
+package com.horizonpack.horizonsociety.entities;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.FloatGoal;
+import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
+import net.minecraft.world.entity.ai.goal.RandomStrollGoal;
+import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+
+public class NpcEntity extends PathfinderMob {
+
+    private static final EntityDataAccessor<String> PROFESSION_ID = SynchedEntityData.defineId(NpcEntity.class, EntityDataSerializers.STRING);
+    private static final EntityDataAccessor<String> CIVILIZATION_UUID = SynchedEntityData.defineId(NpcEntity.class, EntityDataSerializers.STRING);
+
+    public NpcEntity(EntityType<? extends PathfinderMob> type, Level level) {
+        super(type, level);
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        super.defineSynchedData(builder);
+        builder.define(PROFESSION_ID, "horizonsociety:farmer");
+        builder.define(CIVILIZATION_UUID, "");
+    }
+
+    @Override
+    protected void registerGoals() {
+        this.goalSelector.addGoal(0, new FloatGoal(this));
+        this.goalSelector.addGoal(1, new WaterAvoidingRandomStrollGoal(this, 0.6D));
+        this.goalSelector.addGoal(2, new LookAtPlayerGoal(this, Player.class, 8.0F));
+        this.goalSelector.addGoal(3, new RandomStrollGoal(this, 0.6D));
+    }
+
+    public static AttributeSupplier.Builder createAttributes() {
+        return PathfinderMob.createMobAttributes()
+                .add(Attributes.MAX_HEALTH, 20.0D)
+                .add(Attributes.MOVEMENT_SPEED, 0.3D)
+                .add(Attributes.ATTACK_DAMAGE, 2.0D);
+    }
+
+    public void setProfession(ResourceLocation profId) {
+        this.entityData.set(PROFESSION_ID, profId.toString());
+    }
+
+    public ResourceLocation getProfession() {
+        return ResourceLocation.parse(this.entityData.get(PROFESSION_ID));
+    }
+
+    @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        tag.putString("Profession", this.entityData.get(PROFESSION_ID));
+        tag.putString("CivId", this.entityData.get(CIVILIZATION_UUID));
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        if (tag.contains("Profession")) this.entityData.set(PROFESSION_ID, tag.getString("Profession"));
+        if (tag.contains("CivId")) this.entityData.set(CIVILIZATION_UUID, tag.getString("CivId"));
+    }
+}
+13. Block & Item Registry
+(Note: See SocietyRegistries.java in Section 4 for the DeferredRegister code. Below are the class implementations.)
+13.1 EmbassyBlock
+File: blocks/EmbassyBlock.java
+code
+Java
+package com.horizonpack.horizonsociety.blocks;
+
+import com.horizonpack.horizonsociety.blockentities.EmbassyBlockEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import org.jetbrains.annotations.Nullable;
+
+public class EmbassyBlock extends BaseEntityBlock {
+    public EmbassyBlock(Properties props) {
+        super(props);
+    }
+
+    @Override
+    public RenderShape getRenderShape(BlockState state) {
+        return RenderShape.MODEL;
+    }
+
+    @Nullable
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new EmbassyBlockEntity(pos, state);
+    }
+
+    @Override
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hitResult) {
+        if (!level.isClientSide && player instanceof ServerPlayer serverPlayer) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be instanceof EmbassyBlockEntity embassy) {
+                serverPlayer.openMenu(embassy, pos);
+                return InteractionResult.CONSUME;
+            }
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+}
+14. Block Entities
+14.1 EmbassyBlockEntity
+File: blockentities/EmbassyBlockEntity.java
+code
+Java
+package com.horizonpack.horizonsociety.blockentities;
+
+import com.horizonpack.horizonsociety.core.SocietyRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.UUID;
+
+public class EmbassyBlockEntity extends BlockEntity implements MenuProvider {
+
+    private UUID tiedCivilizationId;
+
+    public EmbassyBlockEntity(BlockPos pos, BlockState state) {
+        super(SocietyRegistries.EMBASSY_BE.get(), pos, state);
+    }
+
+    public void setTiedCivilizationId(UUID id) {
+        this.tiedCivilizationId = id;
+        setChanged();
+    }
+
+    public UUID getTiedCivilizationId() {
+        return tiedCivilizationId;
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        if (tiedCivilizationId != null) {
+            tag.putUUID("CivId", tiedCivilizationId);
+        }
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("CivId")) {
+            tiedCivilizationId = tag.getUUID("CivId");
+        }
+    }
+
+    @Override
+    public Component getDisplayName() {
+        return Component.translatable("block.horizonsociety.embassy");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player player) {
+        // Returning null for brevity; in full UI this returns the Diplomacy Menu container
+        return null; 
+    }
+}
+15. Event Hooks
+File: events/SocietyEventHandlers.java
+code
+Java
+package com.horizonpack.horizonsociety.events;
+
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizonsociety.ai.CivilizationDirector;
+import com.horizonpack.horizonsociety.core.HorizonSociety;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonSociety.MODID)
+public class SocietyEventHandlers {
+
+    private static int tickCounter = 0;
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        
+        tickCounter++;
+        if (tickCounter >= 1200) { // Check AI Director every 1 minute
+            tickCounter = 0;
+            CivilizationDirector.tickDirector(level);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onDayAdvance(DayAdvanceEvent event) {
+        if (event.level() instanceof ServerLevel level) {
+            CivilizationDirector.onDailyTick(level);
+        }
+    }
+}
+16. Network Packets
+16.1 RequestDiplomacyPacket
+File: network/packets/RequestDiplomacyPacket.java
+code
+Java
+package com.horizonpack.horizonsociety.network.packets;
+
+import com.horizonpack.horizonsociety.core.HorizonSociety;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.UUID;
+
+public record RequestDiplomacyPacket(UUID targetCivId, String actionId) implements CustomPacketPayload {
+
+    public static final Type<RequestDiplomacyPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonSociety.MODID, "request_diplomacy"));
+
+    public static final StreamCodec<ByteBuf, RequestDiplomacyPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.UUID, RequestDiplomacyPacket::targetCivId,
+        ByteBufCodecs.STRING_UTF8, RequestDiplomacyPacket::actionId,
+        RequestDiplomacyPacket::new
+    );
+
+    @Override
+    public Type<RequestDiplomacyPacket> type() {
+        return TYPE;
+    }
+
+    public static void handleServer(RequestDiplomacyPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.server.level.ServerPlayer player = (net.minecraft.server.level.ServerPlayer) context.player();
+            // Server-side diplomacy validation logic using DiplomacyEngine
+        });
+    }
+}
+16.2 SocietyPacketHandler
+File: network/SocietyPacketHandler.java
+code
+Java
+package com.horizonpack.horizonsociety.network;
+
+import com.horizonpack.horizonsociety.core.HorizonSociety;
+import com.horizonpack.horizonsociety.network.packets.RequestDiplomacyPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class SocietyPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonSociety.MODID).versioned("1.0.0");
+        registrar.playToServer(RequestDiplomacyPacket.TYPE, RequestDiplomacyPacket.STREAM_CODEC, RequestDiplomacyPacket::handleServer);
+    }
+}
+17. Configuration
+File: core/SocietyConfig.java
+code
+Java
+package com.horizonpack.horizonsociety.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class SocietyConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.BooleanValue civsAdvanceIndependently;
+        public final ModConfigSpec.IntValue maxSimultaneousCivs;
+        public final ModConfigSpec.DoubleValue baseAggressionMultiplier;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("civilization");
+            civsAdvanceIndependently = builder.comment("Allow NPCs to reach ages beyond the player").define("civsAdvanceIndependently", true);
+            maxSimultaneousCivs = builder.comment("Max number of major empires allowed").defineInRange("maxSimultaneousCivs", 5, 1, 20);
+            baseAggressionMultiplier = builder.comment("Multiplier for NPC willingness to declare war").defineInRange("baseAggressionMultiplier", 1.0, 0.0, 5.0);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        Client(ModConfigSpec.Builder builder) {}
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+18. Data Pack Integration
+All Government Types, Professions, Diplomatic Actions, and Personalities are serialized and synchronized via custom DeferredRegisters (see Section 4). This allows data pack developers to inject custom governments or overwrite existing multipliers.
+19. Blockstate & Model JSONs
+19.1 EmbassyBlock Blockstate
+File: assets/horizonsociety/blockstates/embassy.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonsociety:block/embassy" }
+  }
+}
+19.2 EmbassyBlock Model
+File: assets/horizonsociety/models/block/embassy.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "bottom": "minecraft:block/polished_andesite",
+    "top": "minecraft:block/gold_block",
+    "side": "minecraft:block/quartz_bricks"
+  }
+}
+19.3 Treaty Item Model
+File: assets/horizonsociety/models/item/treaty.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonsociety:item/treaty"
+  }
+}
+20. Recipe JSONs
+20.1 Embassy Recipe
+File: data/horizonsociety/recipes/embassy.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "iron_age" }
+  ],
+  "pattern": [
+    "GGG",
+    "PQP",
+    "SSS"
+  ],
+  "key": {
+    "G": { "item": "minecraft:gold_block" },
+    "P": { "item": "minecraft:paper" },
+    "Q": { "item": "minecraft:quartz_bricks" },
+    "S": { "item": "minecraft:polished_andesite" }
+  },
+  "result": {
+    "id": "horizonsociety:embassy",
+    "count": 1
+  }
+}
+21. Loot Table JSONs
+21.1 Embassy Block Drop
+File: data/horizonsociety/loot_tables/blocks/embassy.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonsociety:embassy"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "minecraft:survives_explosion"
+        }
+      ]
+    }
+  ]
+}
+22. Tag JSONs
+22.1 Block Tags (Mining)
+File: data/minecraft/tags/blocks/mineable/pickaxe.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonsociety:embassy",
+    "horizonsociety:intelligence_desk"
+  ]
+}
+23. Lang / Localization
+File: assets/horizonsociety/lang/en_us.json
+code
+JSON
+{
+  "block.horizonsociety.embassy": "Embassy Desk",
+  "block.horizonsociety.intelligence_desk": "Intelligence Desk",
+  "item.horizonsociety.treaty": "Diplomatic Treaty",
+  "item.horizonsociety.dossier": "Spy Dossier",
+  "entity.horizonsociety.npc": "Civilian",
+
+  "gov.tribalism": "Tribalism",
+  "gov.chiefdom": "Chiefdom",
+  "gov.monarchy": "Monarchy",
+  "gov.feudalism": "Feudalism",
+  "gov.theocracy": "Theocracy",
+  "gov.oligarchy": "Oligarchy",
+  "gov.republic": "Republic",
+  "gov.democracy": "Democracy",
+  "gov.dictatorship": "Dictatorship",
+  "gov.communism": "Communism",
+  "gov.corporation": "Corporation",
+
+  "pers.expansionist": "Expansionist",
+  "pers.merchant": "Merchant",
+  "pers.isolationist": "Isolationist",
+  "pers.religious": "Religious",
+  "pers.scientific": "Scientific",
+  "pers.militarist": "Militarist",
+  "pers.diplomatic": "Diplomatic",
+  "pers.opportunist": "Opportunist",
+
+  "diplo.peace_treaty": "Peace Treaty",
+  "diplo.trade_agreement": "Trade Agreement",
+  "diplo.military_alliance": "Military Alliance",
+  "diplo.non_aggression_pact": "Non-Aggression Pact",
+  "diplo.research_agreement": "Research Agreement",
+  "diplo.royal_marriage": "Royal Marriage",
+  "diplo.vassalization": "Demand Vassalization",
+  "diplo.tribute_demand": "Demand Tribute",
+  "diplo.joint_war": "Propose Joint War",
+  "diplo.espionage_agreement": "Intelligence Sharing",
+  "diplo.embargo": "Trade Embargo",
+  "diplo.sanction": "Economic Sanction",
+  "diplo.declare_war": "Declare War",
+  "diplo.white_peace": "Offer White Peace",
+  "diplo.surrender": "Unconditional Surrender",
+
+  "prof.miner": "Miner",
+  "prof.lumberjack": "Lumberjack",
+  "prof.farmer": "Farmer",
+  "prof.shepherd": "Shepherd",
+  "prof.fisherman": "Fisherman",
+  "prof.hunter": "Hunter",
+  "prof.forager": "Forager",
+  "prof.blacksmith": "Blacksmith",
+  "prof.carpenter": "Carpenter",
+  "prof.tailor": "Tailor",
+  "prof.potter": "Potter",
+  "prof.glassblower": "Glassblower",
+  "prof.baker": "Baker",
+  "prof.butcher": "Butcher",
+  "prof.brewer": "Brewer",
+  "prof.merchant": "Merchant",
+  "prof.innkeeper": "Innkeeper",
+  "prof.soldier": "Soldier",
+  "prof.archer": "Archer",
+  "prof.cavalry": "Cavalry",
+  "prof.guard": "Guard",
+  "prof.spy": "Spy",
+  "prof.assassin": "Assassin",
+  "prof.scholar": "Scholar",
+  "prof.priest": "Priest",
+  "prof.teacher": "Teacher",
+  "prof.doctor": "Doctor",
+  "prof.engineer": "Engineer",
+  "prof.architect": "Architect",
+  "prof.banker": "Banker",
+  "prof.lawyer": "Lawyer",
+  "prof.artist": "Artist",
+  "prof.musician": "Musician",
+  "prof.actor": "Actor",
+
+  "advancements.horizonsociety.root.title": "Statecraft",
+  "advancements.horizonsociety.root.desc": "Interact with a rival civilization.",
+  "advancements.horizonsociety.treaty.title": "Pen is Mightier",
+  "advancements.horizonsociety.treaty.desc": "Successfully sign a peace treaty."
+}
+24. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonsociety'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonsociety', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonworld:1.0.0"
+    implementation "com.horizonpack:horizonbiome:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+25. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonsociety"
+    version = "1.0.0"
+    displayName = "Horizon Society"
+    description = """
+Manages NPC civilizations, diplomacy, espionage, and dynamic AI progression for the Horizon Corebreach modpack.
+Includes 11 government types, 34 distinct professions, complex AI diplomacy, and covert operations.
+"""
+    logoFile = "horizonsociety.png"
+
+[[dependencies.horizonsociety]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonsociety]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonsociety]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsociety]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsociety]]
+    modId = "horizonworld"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsociety]]
+    modId = "horizonbiome"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+26. Critical Implementation Notes
+Custom Registry Synchronization: Government types, personality types, professions, and diplomatic actions are implemented using ResourceKey<Registry<T>> initialized in the NewRegistryEvent with .sync(true). This enforces client-server symmetry, guaranteeing that GUI diplomacy screens do not crash due to mismatched ID lookups.
+AI Director Thread Offloading: CivilizationDirector.tickDirector() scans massive amounts of block data to update settlement bounding boxes and resource yields. This must be distributed. Accumulate block reads into a queue and process max 50 blocks per tick on the main thread, or dispatch pure calculations to Util.backgroundExecutor().
+NBT Depth and Saving: SocietySavedData retains the global map of civilizations. To prevent massive NBT bloat when serializing thousands of NPC relationships, the DiplomaticRelation class serializes exclusively non-neutral relations. If civ A has not met civ B, it does not write to NBT.
+Espionage Probability Calculation: The success of an espionage mission inside EspionageEngine dynamically checks target counterEspionageLevel (which scales with Government Type and Police/Guard count). Random checks should use the specific ServerLevel#getRandom() rather than Math.random() to preserve deterministic outcomes for debugging.
+NPC Entity Data Synching: The NpcEntity defines its profession via EntityDataAccessor<String>. Due to generic mapping, do not pass bare ResourceLocation directly into the SynchedEntityData; use String and parse it back to a ResourceLocation during getters to avoid classloader serialization issues in 1.21.1.
+Diplomacy Packets: RequestDiplomacyPacket is sent from the client's EmbassyScreen. Since players can theoretically spoof packets to force treaties, the handleServer block must retrieve the exact state of SocietySavedData and manually re-evaluate DiplomacyEngine.canAccept(targetCiv, action) before applying the treaty state change.
+Social Class Wealth Modifiers: When implementing ProfessionDefinition, the assigned SocialClass carries a wealthMultiplier. HorizonEconomy relies on this multiplier to distribute tax yields when the AI Director calculates daily settlement revenue. Do not nullify this object.
+Independent Civ Advancements: Check the civsAdvanceIndependently boolean config parameter during the DayAdvanceEvent inside CivilizationDirector.onDailyTick. If enabled, civs track their own currentAgeId and can unlock new block schemas. If disabled, clamp their currentAgeId to the global HorizonCore WorldAgeData.getGlobalAge().

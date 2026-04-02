@@ -1,0 +1,29 @@
+{
+  "description": "horizoncore.tech.copper_smelting.desc",
+  "effects": [
+    {
+      "type": "unlock_recipe_category",
+      "category": "horizoncraft:copper_tools"
+    },
+    {
+      "type": "advance_age",
+      "newAge": "copper_age"
+    }
+  ],
+  "icon": "horizoncore:textures/tech/copper_smelting.png",
+  "prerequisites": [
+    "horizoncore:primitive_pottery"
+  ],
+  "required_age": "copper_age",
+  "research_cost": [
+    {
+      "count": 16,
+      "item": "minecraft:raw_copper"
+    },
+    {
+      "count": 8,
+      "item": "minecraft:charcoal"
+    }
+  ],
+  "research_time_ticks": 12000
+}

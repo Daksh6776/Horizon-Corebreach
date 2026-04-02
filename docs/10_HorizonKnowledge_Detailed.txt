@@ -1,0 +1,1176 @@
+HorizonKnowledge — Detailed Technical Specification
+Mod ID: horizonknowledge
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Archaeology, Philosophy, Ethics, and Communication Networks
+Absorbed mods: HorizonArchaeology, HorizonPhilosophy, HorizonEthics, HorizonCommunication
+Depends on: horizoncore, horizondata, horizonsociety, horizonculture
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Archaeological Artifacts Registry
+Philosophical Schools Registry
+Communication Networks Registry
+Knowledge Buildings Registry
+Archaeology & Excavation Engine
+Philosophy & Ethics Engine
+Communication & Information Engine
+World SavedData (Knowledge State)
+Data Components
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonKnowledge simulates the discovery, processing, and transmission of ideas, historical records, and moral frameworks throughout civilization.
+Archaeology & Antiquity: Players and NPCs excavate ancient ruins. Artifacts are unearthed, carbon-dated, and placed in Museums to generate cultural prestige and reverse-engineer lost technologies.
+Philosophy & Ethics: 10 distinct philosophical schools compete for dominance in the minds of the population, shaping a civilization's moral compass. This governs how NPCs react to player actions (e.g., Utilitarian societies accept forced labor if it maximizes overall output, while Existentialist societies revolt).
+Communication Networks: Information does not travel instantly. The spread of technology, diplomatic incidents, and cultural shifts is gated by the communication infrastructure, ranging from foot messengers to quantum entanglement.
+Knowledge Infrastructure: 8 distinct building types that act as nodes for generating research, storing artifacts, and amplifying communication ranges.
+2. File & Package Structure
+code
+Text
+horizon_knowledge/
+├── src/main/java/com/horizonpack/horizonknowledge/
+│   ├── core/
+│   │   ├── HorizonKnowledge.java
+│   │   ├── KnowledgeRegistries.java
+│   │   └── KnowledgeConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── ArtifactType.java
+│   │   │   ├── PhilosophicalSchool.java
+│   │   │   └── CommunicationNetwork.java
+│   │   ├── components/
+│   │   │   ├── ArtifactData.java
+│   │   │   └── KnowledgeComponents.java
+│   │   └── KnowledgeSavedData.java
+│   ├── systems/
+│   │   ├── ArchaeologyEngine.java
+│   │   ├── PhilosophyEngine.java
+│   │   └── CommunicationEngine.java
+│   ├── blocks/
+│   │   ├── ArchiveBlock.java
+│   │   ├── ScriptoriumBlock.java
+│   │   ├── AcademyBlock.java
+│   │   ├── ObservatoryBlock.java
+│   │   ├── PrintingHouseBlock.java
+│   │   ├── MuseumBlock.java
+│   │   ├── ResearchInstituteBlock.java
+│   │   ├── SupercomputerLabBlock.java
+│   │   └── ExcavationSiteBlock.java
+│   ├── blockentities/
+│   │   ├── MuseumBlockEntity.java
+│   │   ├── SupercomputerLabBlockEntity.java
+│   │   └── ExcavationSiteBlockEntity.java
+│   ├── items/
+│   │   ├── ArtifactItem.java
+│   │   └── CarbonDatingKitItem.java
+│   ├── events/
+│   │   ├── KnowledgeEventHandlers.java
+│   │   └── custom/
+│   │       ├── ArtifactExcavatedEvent.java
+│   │       ├── MoralDecisionEvent.java
+│   │       └── NetworkUpgradedEvent.java
+│   ├── network/
+│   │   ├── KnowledgePacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncPhilosophyPacket.java
+│   │       └── ExcavationProgressPacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── MuseumScreen.java
+│   │   │   └── PhilosophyHudOverlay.java
+│   │   └── render/
+│   │       └── MuseumDisplayRenderer.java
+│   └── utils/
+│       ├── EthicalWeightMath.java
+│       └── NetworkPropagationUtil.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonknowledge/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonknowledge/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonKnowledge.java
+code
+Java
+package com.horizonpack.horizonknowledge.core;
+
+import com.horizonpack.horizonknowledge.data.components.KnowledgeComponents;
+import com.horizonpack.horizonknowledge.events.KnowledgeEventHandlers;
+import com.horizonpack.horizonknowledge.network.KnowledgePacketHandler;
+import com.horizonpack.horizonknowledge.systems.ArchaeologyEngine;
+import com.horizonpack.horizonknowledge.systems.CommunicationEngine;
+import com.horizonpack.horizonknowledge.systems.PhilosophyEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonKnowledge.MODID)
+public class HorizonKnowledge {
+    public static final String MODID = "horizonknowledge";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonKnowledge(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, KnowledgeConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, KnowledgeConfig.CLIENT_SPEC);
+
+        KnowledgeRegistries.BLOCKS.register(modEventBus);
+        KnowledgeRegistries.ITEMS.register(modEventBus);
+        KnowledgeRegistries.BLOCK_ENTITIES.register(modEventBus);
+        KnowledgeRegistries.MENU_TYPES.register(modEventBus);
+
+        KnowledgeRegistries.ARTIFACT_TYPES.register(modEventBus);
+        KnowledgeRegistries.PHILOSOPHICAL_SCHOOLS.register(modEventBus);
+        KnowledgeRegistries.COMMUNICATION_NETWORKS.register(modEventBus);
+        KnowledgeComponents.DATA_COMPONENT_TYPES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(KnowledgeRegistries::registerNewRegistries);
+        modEventBus.addListener(KnowledgePacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(KnowledgeEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            ArchaeologyEngine.init();
+            PhilosophyEngine.init();
+            CommunicationEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/KnowledgeRegistries.java
+code
+Java
+package com.horizonpack.horizonknowledge.core;
+
+import com.horizonpack.horizonknowledge.data.registry.ArtifactType;
+import com.horizonpack.horizonknowledge.data.registry.CommunicationNetwork;
+import com.horizonpack.horizonknowledge.data.registry.PhilosophicalSchool;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class KnowledgeRegistries {
+
+    public static final ResourceKey<Registry<ArtifactType>> ARTIFACT_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonKnowledge.MODID, "artifact_types"));
+    public static final ResourceKey<Registry<PhilosophicalSchool>> PHILOSOPHY_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonKnowledge.MODID, "philosophical_schools"));
+    public static final ResourceKey<Registry<CommunicationNetwork>> COMM_NETWORK_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonKnowledge.MODID, "communication_networks"));
+
+    public static final DeferredRegister<ArtifactType> ARTIFACT_TYPES = DeferredRegister.create(ARTIFACT_KEY, HorizonKnowledge.MODID);
+    public static final DeferredRegister<PhilosophicalSchool> PHILOSOPHICAL_SCHOOLS = DeferredRegister.create(PHILOSOPHY_KEY, HorizonKnowledge.MODID);
+    public static final DeferredRegister<CommunicationNetwork> COMMUNICATION_NETWORKS = DeferredRegister.create(COMM_NETWORK_KEY, HorizonKnowledge.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonKnowledge.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonKnowledge.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonKnowledge.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonKnowledge.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(ARTIFACT_KEY).sync(true));
+        event.register(new RegistryBuilder<>(PHILOSOPHY_KEY).sync(true));
+        event.register(new RegistryBuilder<>(COMM_NETWORK_KEY).sync(true));
+    }
+
+    static {
+        ArtifactType.registerAll();
+        PhilosophicalSchool.registerAll();
+        CommunicationNetwork.registerAll();
+        com.horizonpack.horizonknowledge.blocks.KnowledgeBuildingRegistry.registerAll();
+        com.horizonpack.horizonknowledge.items.ArtifactItemRegistry.registerAll();
+    }
+}
+5. Archaeological Artifacts Registry
+File: data/registry/ArtifactType.java
+code
+Java
+package com.horizonpack.horizonknowledge.data.registry;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record ArtifactType(ResourceLocation id, String nameKey, int rarity, String originAgeId, float prestigeValue) {
+
+    public static void registerAll() {
+        register("flint_tool", "artifact.flint_tool", 1, "stone_age", 10.0f);
+        register("clay_tablet", "artifact.clay_tablet", 2, "copper_age", 25.0f);
+        register("bronze_figurine", "artifact.bronze_figurine", 3, "bronze_age", 50.0f);
+        register("iron_relic", "artifact.iron_relic", 2, "iron_age", 40.0f);
+        register("ancient_scroll", "artifact.ancient_scroll", 4, "bronze_age", 100.0f);
+        register("roman_coin", "artifact.roman_coin", 3, "iron_age", 75.0f);
+        register("medieval_manuscript", "artifact.medieval_manuscript", 4, "medieval", 150.0f);
+        register("lost_technology_blueprint", "artifact.lost_technology_blueprint", 5, "industrial", 300.0f);
+        register("alien_artifact", "artifact.alien_artifact", 6, "unknown", 1000.0f);
+        register("core_fragment", "artifact.core_fragment", 7, "dimensional", 5000.0f);
+    }
+
+    private static void register(String id, String key, int rarity, String origin, float prestige) {
+        KnowledgeRegistries.ARTIFACT_TYPES.register(id, () -> new ArtifactType(
+            ResourceLocation.fromNamespaceAndPath("horizonknowledge", id), key, rarity, origin, prestige));
+    }
+}
+Total Archaeological artifacts registered: 10
+File: items/ArtifactItemRegistry.java
+code
+Java
+package com.horizonpack.horizonknowledge.items;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.world.item.Item;
+import net.neoforged.neoforge.registries.DeferredItem;
+
+public class ArtifactItemRegistry {
+
+    public static final DeferredItem<Item> FLINT_TOOL = registerArtifact("flint_tool");
+    public static final DeferredItem<Item> CLAY_TABLET = registerArtifact("clay_tablet");
+    public static final DeferredItem<Item> BRONZE_FIGURINE = registerArtifact("bronze_figurine");
+    public static final DeferredItem<Item> IRON_RELIC = registerArtifact("iron_relic");
+    public static final DeferredItem<Item> ANCIENT_SCROLL = registerArtifact("ancient_scroll");
+    public static final DeferredItem<Item> ROMAN_COIN = registerArtifact("roman_coin");
+    public static final DeferredItem<Item> MEDIEVAL_MANUSCRIPT = registerArtifact("medieval_manuscript");
+    public static final DeferredItem<Item> LOST_TECHNOLOGY_BLUEPRINT = registerArtifact("lost_technology_blueprint");
+    public static final DeferredItem<Item> ALIEN_ARTIFACT = registerArtifact("alien_artifact");
+    public static final DeferredItem<Item> CORE_FRAGMENT = registerArtifact("core_fragment");
+
+    private static DeferredItem<Item> registerArtifact(String name) {
+        return KnowledgeRegistries.ITEMS.register(name, () -> new ArtifactItem(new Item.Properties().stacksTo(1), name));
+    }
+
+    public static void registerAll() {}
+}
+Total Artifact Items registered: 10
+6. Philosophical Schools Registry
+File: data/registry/PhilosophicalSchool.java
+code
+Java
+package com.horizonpack.horizonknowledge.data.registry;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record PhilosophicalSchool(ResourceLocation id, String nameKey, float happinessModifier, float productionModifier, float cohesionModifier, float scienceModifier) {
+
+    public static void registerAll() {
+        register("stoicism", "philosophy.stoicism", 1.2f, 1.0f, 1.1f, 1.0f);
+        register("epicureanism", "philosophy.epicureanism", 1.5f, 0.8f, 0.9f, 1.0f);
+        register("confucianism", "philosophy.confucianism", 1.0f, 1.2f, 1.5f, 0.9f);
+        register("taoism", "philosophy.taoism", 1.3f, 0.7f, 1.2f, 1.1f);
+        register("utilitarianism", "philosophy.utilitarianism", 0.8f, 1.5f, 1.0f, 1.3f);
+        register("nihilism", "philosophy.nihilism", 0.5f, 0.6f, 0.4f, 1.5f);
+        register("pragmatism", "philosophy.pragmatism", 1.0f, 1.3f, 1.1f, 1.2f);
+        register("existentialism", "philosophy.existentialism", 1.1f, 0.9f, 0.7f, 1.4f);
+        register("empiricism", "philosophy.empiricism", 1.0f, 1.1f, 1.0f, 1.8f);
+        register("rationalism", "philosophy.rationalism", 1.0f, 1.0f, 1.2f, 1.6f);
+    }
+
+    private static void register(String id, String key, float happiness, float prod, float cohesion, float science) {
+        KnowledgeRegistries.PHILOSOPHICAL_SCHOOLS.register(id, () -> new PhilosophicalSchool(
+            ResourceLocation.fromNamespaceAndPath("horizonknowledge", id), key, happiness, prod, cohesion, science));
+    }
+}
+Total Philosophical schools registered: 10
+7. Communication Networks Registry
+File: data/registry/CommunicationNetwork.java
+code
+Java
+package com.horizonpack.horizonknowledge.data.registry;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CommunicationNetwork(ResourceLocation id, String nameKey, int baseRangeBlocks, float transmissionSpeedMultiplier, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("messenger_system", "network.messenger", 1000, 0.1f, "stone_age");
+        register("postal_road", "network.postal", 5000, 0.3f, "iron_age");
+        register("semaphore_tower", "network.semaphore", 10000, 0.8f, "medieval");
+        register("telegraph_line", "network.telegraph", 50000, 5.0f, "industrial");
+        register("telephone_network", "network.telephone", 100000, 10.0f, "industrial");
+        register("radio_broadcast", "network.radio", 250000, 50.0f, "modern");
+        register("television_network", "network.television", 500000, 75.0f, "modern");
+        register("satellite_internet", "network.satellite", 10000000, 500.0f, "modern");
+        register("quantum_communication", "network.quantum", Integer.MAX_VALUE, 10000.0f, "future");
+    }
+
+    private static void register(String id, String key, int range, float speed, String age) {
+        KnowledgeRegistries.COMMUNICATION_NETWORKS.register(id, () -> new CommunicationNetwork(
+            ResourceLocation.fromNamespaceAndPath("horizonknowledge", id), key, range, speed, age));
+    }
+}
+Total Communication networks registered: 9
+8. Knowledge Buildings Registry
+File: blocks/KnowledgeBuildingRegistry.java
+code
+Java
+package com.horizonpack.horizonknowledge.blocks;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class KnowledgeBuildingRegistry {
+
+    private static BlockBehaviour.Properties buildingProps(MapColor color, float strength) {
+        return BlockBehaviour.Properties.of().mapColor(color).strength(strength).sound(SoundType.STONE).requiresCorrectToolForDrops();
+    }
+
+    public static final DeferredBlock<Block> ARCHIVE = KnowledgeRegistries.BLOCKS.registerBlock("archive", () -> new ArchiveBlock(buildingProps(MapColor.WOOD, 2.0f)));
+    public static final DeferredBlock<Block> SCRIPTORIUM = KnowledgeRegistries.BLOCKS.registerBlock("scriptorium", () -> new ScriptoriumBlock(buildingProps(MapColor.WOOD, 2.5f)));
+    public static final DeferredBlock<Block> ACADEMY = KnowledgeRegistries.BLOCKS.registerBlock("academy", () -> new AcademyBlock(buildingProps(MapColor.STONE, 4.0f)));
+    public static final DeferredBlock<Block> OBSERVATORY = KnowledgeRegistries.BLOCKS.registerBlock("observatory", () -> new ObservatoryBlock(buildingProps(MapColor.STONE, 3.5f)));
+    public static final DeferredBlock<Block> PRINTING_HOUSE = KnowledgeRegistries.BLOCKS.registerBlock("printing_house", () -> new PrintingHouseBlock(buildingProps(MapColor.COLOR_BROWN, 3.0f)));
+    public static final DeferredBlock<Block> MUSEUM = KnowledgeRegistries.BLOCKS.registerBlock("museum", () -> new MuseumBlock(buildingProps(MapColor.QUARTZ, 5.0f)));
+    public static final DeferredBlock<Block> RESEARCH_INSTITUTE = KnowledgeRegistries.BLOCKS.registerBlock("research_institute", () -> new ResearchInstituteBlock(buildingProps(MapColor.METAL, 6.0f)));
+    public static final DeferredBlock<Block> SUPERCOMPUTER_LAB = KnowledgeRegistries.BLOCKS.registerBlock("supercomputer_lab", () -> new SupercomputerLabBlock(buildingProps(MapColor.COLOR_LIGHT_GRAY, 7.0f)));
+
+    public static void registerAll() {
+        KnowledgeRegistries.BLOCKS.getEntries().forEach(block -> 
+            KnowledgeRegistries.ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+    }
+}
+Total Knowledge buildings registered: 8
+9. Archaeology & Excavation Engine
+File: systems/ArchaeologyEngine.java
+code
+Java
+package com.horizonpack.horizonknowledge.systems;
+
+import com.horizonpack.horizonknowledge.data.components.ArtifactData;
+import com.horizonpack.horizonknowledge.data.components.KnowledgeComponents;
+import com.horizonpack.horizonknowledge.items.ArtifactItemRegistry;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+
+import java.util.Random;
+
+public class ArchaeologyEngine {
+
+    public static void init() {}
+
+    public static void performExcavation(ServerLevel level, BlockPos pos, Player player) {
+        Random rand = level.getRandom();
+        
+        // 10% chance to find an artifact when brushing suspicious blocks
+        if (rand.nextFloat() < 0.10f) {
+            ItemStack artifactStack = generateRandomArtifact(level, rand);
+            
+            // Assign carbon dating based on world coordinates and depth
+            int estimatedAge = (64 - pos.getY()) * 100 + rand.nextInt(500);
+            artifactStack.set(KnowledgeComponents.ARTIFACT_DATA.get(), new ArtifactData(estimatedAge, player.getUUID(), pos));
+            
+            net.minecraft.world.entity.item.ItemEntity entity = new net.minecraft.world.entity.item.ItemEntity(level, pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5, artifactStack);
+            level.addFreshEntity(entity);
+            
+            // Fire event for advancements/skills
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new com.horizonpack.horizonknowledge.events.custom.ArtifactExcavatedEvent(player, artifactStack, pos));
+        }
+    }
+
+    private static ItemStack generateRandomArtifact(ServerLevel level, Random rand) {
+        float roll = rand.nextFloat();
+        if (roll < 0.01f) return new ItemStack(ArtifactItemRegistry.ALIEN_ARTIFACT.get());
+        if (roll < 0.05f) return new ItemStack(ArtifactItemRegistry.LOST_TECHNOLOGY_BLUEPRINT.get());
+        if (roll < 0.15f) return new ItemStack(ArtifactItemRegistry.MEDIEVAL_MANUSCRIPT.get());
+        if (roll < 0.30f) return new ItemStack(ArtifactItemRegistry.ROMAN_COIN.get());
+        if (roll < 0.45f) return new ItemStack(ArtifactItemRegistry.ANCIENT_SCROLL.get());
+        if (roll < 0.60f) return new ItemStack(ArtifactItemRegistry.IRON_RELIC.get());
+        if (roll < 0.75f) return new ItemStack(ArtifactItemRegistry.BRONZE_FIGURINE.get());
+        if (roll < 0.90f) return new ItemStack(ArtifactItemRegistry.CLAY_TABLET.get());
+        return new ItemStack(ArtifactItemRegistry.FLINT_TOOL.get());
+    }
+}
+10. Philosophy & Ethics Engine
+File: systems/PhilosophyEngine.java
+code
+Java
+package com.horizonpack.horizonknowledge.systems;
+
+import com.horizonpack.horizonknowledge.data.KnowledgeSavedData;
+import com.horizonpack.horizonsociety.state.Civilization;
+import com.horizonpack.horizonsociety.state.SocietySavedData;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.Map;
+import java.util.UUID;
+
+public class PhilosophyEngine {
+
+    public static void init() {}
+
+    /**
+     * Called when a player makes a moral decision (e.g. freeing slaves, declaring unjust war).
+     * Shifts the player's philosophical alignment.
+     */
+    public static void processMoralAction(Player player, String actionType, float weight) {
+        KnowledgeSavedData data = KnowledgeSavedData.get((ServerLevel) player.level());
+        
+        ResourceLocation shiftingToward = switch(actionType) {
+            case "free_slaves" -> ResourceLocation.fromNamespaceAndPath("horizonknowledge", "utilitarianism");
+            case "unjust_war" -> ResourceLocation.fromNamespaceAndPath("horizonknowledge", "nihilism");
+            case "build_academy" -> ResourceLocation.fromNamespaceAndPath("horizonknowledge", "rationalism");
+            case "meditate" -> ResourceLocation.fromNamespaceAndPath("horizonknowledge", "stoicism");
+            default -> ResourceLocation.fromNamespaceAndPath("horizonknowledge", "pragmatism");
+        };
+        
+        data.shiftPlayerAlignment(player.getUUID(), shiftingToward, weight);
+    }
+
+    /**
+     * Ticks regional philosophy dominance for NPCs.
+     */
+    public static void tickCivilizationPhilosophies(ServerLevel level) {
+        SocietySavedData societyData = SocietySavedData.get(level);
+        KnowledgeSavedData knowledgeData = KnowledgeSavedData.get(level);
+        
+        for (Civilization civ : societyData.getAllCivilizations().values()) {
+            ResourceLocation dominantSchool = knowledgeData.getDominantPhilosophy(civ.getId());
+            // Apply modifiers to the civilization's stability, production, and science rates
+            // Implementation delegates to HorizonSociety via API hooks
+        }
+    }
+}
+11. Communication & Information Engine
+File: systems/CommunicationEngine.java
+code
+Java
+package com.horizonpack.horizonknowledge.systems;
+
+import com.horizonpack.horizonknowledge.data.KnowledgeSavedData;
+import com.horizonpack.horizonsociety.state.Civilization;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+
+import java.util.UUID;
+
+public class CommunicationEngine {
+
+    public static void init() {}
+
+    /**
+     * Determines how long (in ticks) it takes for a technology or diplomatic event to reach a target civilization.
+     */
+    public static int calculateTransmissionDelay(ServerLevel level, Civilization source, Civilization target) {
+        KnowledgeSavedData data = KnowledgeSavedData.get(level);
+        
+        ResourceLocation sourceNetId = data.getHighestNetwork(source.getId());
+        ResourceLocation targetNetId = data.getHighestNetwork(target.getId());
+        
+        float sourceSpeed = getSpeedModifier(level, sourceNetId);
+        float targetSpeed = getSpeedModifier(level, targetNetId);
+        
+        // Base delay is 1 in-game week (168,000 ticks)
+        int baseDelay = 168000;
+        
+        // The highest communication network between the two dictates the speed
+        float effectiveSpeed = Math.max(sourceSpeed, targetSpeed);
+        
+        return (int) (baseDelay / effectiveSpeed);
+    }
+    
+    private static float getSpeedModifier(ServerLevel level, ResourceLocation networkId) {
+        var network = level.registryAccess().registryOrThrow(com.horizonpack.horizonknowledge.core.KnowledgeRegistries.COMM_NETWORK_KEY).get(networkId);
+        return network != null ? network.transmissionSpeedMultiplier() : 0.1f;
+    }
+}
+12. World SavedData (Knowledge State)
+File: data/KnowledgeSavedData.java
+code
+Java
+package com.horizonpack.horizonknowledge.data;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class KnowledgeSavedData extends SavedData {
+
+    public static final String DATA_NAME = "horizonknowledge_state";
+
+    // Player UUID -> Map of Philosophy ID -> alignment weight
+    private final Map<UUID, Map<ResourceLocation, Float>> playerAlignments = new HashMap<>();
+    
+    // Civ UUID -> Highest communication network ID
+    private final Map<UUID, ResourceLocation> civNetworks = new HashMap<>();
+
+    public static KnowledgeSavedData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(KnowledgeSavedData::new, KnowledgeSavedData::load),
+                DATA_NAME
+        );
+    }
+
+    public void shiftPlayerAlignment(UUID playerId, ResourceLocation philosophy, float weight) {
+        Map<ResourceLocation, Float> alignments = playerAlignments.computeIfAbsent(playerId, k -> new HashMap<>());
+        alignments.put(philosophy, alignments.getOrDefault(philosophy, 0.0f) + weight);
+        setDirty();
+    }
+
+    public ResourceLocation getDominantPhilosophy(UUID civId) {
+        // Return dominant philosophy based on regional calculations (simplified)
+        return ResourceLocation.fromNamespaceAndPath("horizonknowledge", "pragmatism");
+    }
+
+    public ResourceLocation getHighestNetwork(UUID civId) {
+        return civNetworks.getOrDefault(civId, ResourceLocation.fromNamespaceAndPath("horizonknowledge", "messenger_system"));
+    }
+    
+    public void upgradeNetwork(UUID civId, ResourceLocation newNetwork) {
+        civNetworks.put(civId, newNetwork);
+        setDirty();
+    }
+
+    @Override
+    public @NotNull CompoundTag save(@NotNull CompoundTag tag) {
+        ListTag playersTag = new ListTag();
+        playerAlignments.forEach((uuid, map) -> {
+            CompoundTag pTag = new CompoundTag();
+            pTag.putUUID("UUID", uuid);
+            CompoundTag alignments = new CompoundTag();
+            map.forEach((phil, weight) -> alignments.putFloat(phil.toString(), weight));
+            pTag.put("Alignments", alignments);
+            playersTag.add(pTag);
+        });
+        tag.put("PlayerAlignments", playersTag);
+        
+        CompoundTag networksTag = new CompoundTag();
+        civNetworks.forEach((uuid, net) -> networksTag.putString(uuid.toString(), net.toString()));
+        tag.put("CivNetworks", networksTag);
+        
+        return tag;
+    }
+
+    public static KnowledgeSavedData load(CompoundTag tag) {
+        KnowledgeSavedData data = new KnowledgeSavedData();
+        ListTag playersTag = tag.getList("PlayerAlignments", Tag.TAG_COMPOUND);
+        for (int i = 0; i < playersTag.size(); i++) {
+            CompoundTag pTag = playersTag.getCompound(i);
+            UUID uuid = pTag.getUUID("UUID");
+            CompoundTag alignments = pTag.getCompound("Alignments");
+            Map<ResourceLocation, Float> map = new HashMap<>();
+            for (String key : alignments.getAllKeys()) {
+                map.put(ResourceLocation.parse(key), alignments.getFloat(key));
+            }
+            data.playerAlignments.put(uuid, map);
+        }
+        
+        CompoundTag networksTag = tag.getCompound("CivNetworks");
+        for (String key : networksTag.getAllKeys()) {
+            data.civNetworks.put(UUID.fromString(key), ResourceLocation.parse(networksTag.getString(key)));
+        }
+        
+        return data;
+    }
+}
+13. Data Components
+File: data/components/ArtifactData.java
+code
+Java
+package com.horizonpack.horizonknowledge.data.components;
+
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.UUIDUtil;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.codec.ByteBufCodecs;
+
+import java.util.UUID;
+
+public record ArtifactData(int estimatedAgeYears, UUID discovererId, BlockPos excavationSite) {
+    public static final Codec<ArtifactData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
+            Codec.INT.fieldOf("estimated_age_years").forGetter(ArtifactData::estimatedAgeYears),
+            UUIDUtil.CODEC.fieldOf("discoverer_id").forGetter(ArtifactData::discovererId),
+            BlockPos.CODEC.fieldOf("excavation_site").forGetter(ArtifactData::excavationSite)
+    ).apply(instance, ArtifactData::new));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, ArtifactData> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.INT, ArtifactData::estimatedAgeYears,
+            UUIDUtil.STREAM_CODEC, ArtifactData::discovererId,
+            BlockPos.STREAM_CODEC, ArtifactData::excavationSite,
+            ArtifactData::new
+    );
+}
+File: data/components/KnowledgeComponents.java
+code
+Java
+package com.horizonpack.horizonknowledge.data.components;
+
+import com.horizonpack.horizonknowledge.core.HorizonKnowledge;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+
+public class KnowledgeComponents {
+    public static final DeferredRegister.DataComponents DATA_COMPONENT_TYPES = DeferredRegister.createDataComponents(BuiltInRegistries.DATA_COMPONENT_TYPE, HorizonKnowledge.MODID);
+
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<ArtifactData>> ARTIFACT_DATA = DATA_COMPONENT_TYPES.registerComponentType("artifact_data",
+            builder -> builder.persistent(ArtifactData.CODEC).networkSynchronized(ArtifactData.STREAM_CODEC));
+}
+14. Block Entities
+14.1 MuseumBlockEntity
+Displays artifacts to generate regional prestige.
+File: blockentities/MuseumBlockEntity.java
+code
+Java
+package com.horizonpack.horizonknowledge.blockentities;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.items.ItemStackHandler;
+
+public class MuseumBlockEntity extends BlockEntity {
+
+    // 9 display slots for artifacts
+    public final ItemStackHandler displayInventory = new ItemStackHandler(9) {
+        @Override
+        protected void onContentsChanged(int slot) {
+            setChanged();
+        }
+    };
+
+    private float accumulatedPrestige = 0;
+
+    public MuseumBlockEntity(BlockPos pos, BlockState state) {
+        super(KnowledgeRegistries.BLOCK_ENTITIES.getEntries().stream()
+                .filter(r -> r.getId().getPath().equals("museum")).findFirst().get().get(), pos, state);
+    }
+
+    public static void serverTick(net.minecraft.world.level.Level level, BlockPos pos, BlockState state, MuseumBlockEntity be) {
+        if (level.getGameTime() % 24000 == 0) {
+            // Calculate daily prestige
+            float dailyPrestige = 0;
+            for (int i = 0; i < be.displayInventory.getSlots(); i++) {
+                net.minecraft.world.item.ItemStack stack = be.displayInventory.getStackInSlot(i);
+                if (!stack.isEmpty() && stack.getItem() instanceof com.horizonpack.horizonknowledge.items.ArtifactItem artifactItem) {
+                    // Extract rarity/prestige based on artifact data
+                    dailyPrestige += 10.0f; // placeholder
+                }
+            }
+            be.accumulatedPrestige += dailyPrestige;
+            be.setChanged();
+            
+            // Push prestige to nearby Settlement (Integration with HorizonSociety)
+        }
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.put("Displays", displayInventory.serializeNBT(registries));
+        tag.putFloat("Prestige", accumulatedPrestige);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("Displays")) displayInventory.deserializeNBT(registries, tag.getCompound("Displays"));
+        accumulatedPrestige = tag.getFloat("Prestige");
+    }
+}
+14.2 SupercomputerLabBlockEntity
+Massively accelerates research and globally connects to the highest communication tier.
+File: blockentities/SupercomputerLabBlockEntity.java
+code
+Java
+package com.horizonpack.horizonknowledge.blockentities;
+
+import com.horizonpack.horizonknowledge.core.KnowledgeRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class SupercomputerLabBlockEntity extends BlockEntity {
+
+    private int processingPower = 10000;
+    private boolean active = false;
+
+    public SupercomputerLabBlockEntity(BlockPos pos, BlockState state) {
+        super(KnowledgeRegistries.BLOCK_ENTITIES.getEntries().stream()
+                .filter(r -> r.getId().getPath().equals("supercomputer_lab")).findFirst().get().get(), pos, state);
+    }
+
+    public static void serverTick(net.minecraft.world.level.Level level, BlockPos pos, BlockState state, SupercomputerLabBlockEntity be) {
+        // Needs HorizonPower integration to consume MW of electricity
+        // If powered, provides massive boost to HorizonCore technology unlocking globally
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putBoolean("Active", active);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        active = tag.getBoolean("Active");
+    }
+}
+15. Event Hooks
+File: events/KnowledgeEventHandlers.java
+code
+Java
+package com.horizonpack.horizonknowledge.events;
+
+import com.horizonpack.horizonknowledge.core.HorizonKnowledge;
+import com.horizonpack.horizonknowledge.systems.ArchaeologyEngine;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.Items;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.level.BlockEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonKnowledge.MODID)
+public class KnowledgeEventHandlers {
+
+    @SubscribeEvent
+    public static void onBlockBreak(BlockEvent.BreakEvent event) {
+        if (!event.getLevel().isClientSide() && event.getLevel() instanceof ServerLevel level) {
+            // If brushing suspicious blocks (or breaking them specifically)
+            if (event.getState().is(net.minecraft.world.level.block.Blocks.SUSPICIOUS_SAND) || 
+                event.getState().is(net.minecraft.world.level.block.Blocks.SUSPICIOUS_GRAVEL)) {
+                
+                if (event.getPlayer().getMainHandItem().is(Items.BRUSH)) {
+                    ArchaeologyEngine.performExcavation(level, event.getPos(), event.getPlayer());
+                }
+            }
+        }
+    }
+}
+16. Network Packets
+File: network/packets/SyncPhilosophyPacket.java
+code
+Java
+package com.horizonpack.horizonknowledge.network.packets;
+
+import com.horizonpack.horizonknowledge.core.HorizonKnowledge;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.Map;
+
+public record SyncPhilosophyPacket(Map<ResourceLocation, Float> alignments) implements CustomPacketPayload {
+
+    public static final Type<SyncPhilosophyPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonKnowledge.MODID, "sync_philosophy"));
+
+    public static final StreamCodec<ByteBuf, SyncPhilosophyPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.map(HashMap::new, ResourceLocation.STREAM_CODEC, ByteBufCodecs.FLOAT), SyncPhilosophyPacket::alignments,
+        SyncPhilosophyPacket::new
+    );
+
+    @Override
+    public Type<SyncPhilosophyPacket> type() { return TYPE; }
+
+    public static void handleClient(SyncPhilosophyPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            // Update client GUI for Philosophy overlay
+        });
+    }
+}
+File: network/KnowledgePacketHandler.java
+code
+Java
+package com.horizonpack.horizonknowledge.network;
+
+import com.horizonpack.horizonknowledge.core.HorizonKnowledge;
+import com.horizonpack.horizonknowledge.network.packets.SyncPhilosophyPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class KnowledgePacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonKnowledge.MODID).versioned("1.0.0");
+        registrar.playToClient(SyncPhilosophyPacket.TYPE, SyncPhilosophyPacket.STREAM_CODEC, SyncPhilosophyPacket::handleClient);
+    }
+}
+17. Configuration
+File: core/KnowledgeConfig.java
+code
+Java
+package com.horizonpack.horizonknowledge.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class KnowledgeConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue baseExcavationChance;
+        public final ModConfigSpec.BooleanValue ethicsImpactsDiplomacy;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("archaeology");
+            baseExcavationChance = builder.comment("Chance to uncover an artifact when brushing").defineInRange("baseExcavationChance", 0.1, 0.01, 1.0);
+            builder.pop();
+
+            builder.push("philosophy");
+            ethicsImpactsDiplomacy = builder.comment("Philosophical differences cause diplomatic penalties in HorizonSociety").define("ethicsImpactsDiplomacy", true);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        Client(ModConfigSpec.Builder builder) {}
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+18. Data Pack Integration
+The Custom Registries defined in Section 4 (ArtifactType, PhilosophicalSchool, CommunicationNetwork) are fully synced RegistryBuilders. This allows server owners or modpack developers to add new artifacts or entirely new philosophical frameworks (like Transhumanism) using standard JSON structures placed into their respective directories.
+19. Blockstate & Model JSONs
+19.1 Museum Blockstate
+assets/horizonknowledge/blockstates/museum.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonknowledge:block/museum" }
+  }
+}
+19.2 Museum Model
+assets/horizonknowledge/models/block/museum.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "horizonknowledge:block/museum"
+  }
+}
+19.3 Artifact Item Model (Roman Coin)
+assets/horizonknowledge/models/item/roman_coin.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonknowledge:item/roman_coin"
+  }
+}
+20. Recipe JSONs
+20.1 Crafting: Printing House Block
+data/horizonknowledge/recipes/printing_house.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "industrial" }
+  ],
+  "pattern": [
+    "PPP",
+    "B B",
+    "SSS"
+  ],
+  "key": {
+    "P": { "item": "minecraft:paper" },
+    "B": { "item": "minecraft:bookshelf" },
+    "S": { "item": "minecraft:stone_bricks" }
+  },
+  "result": {
+    "id": "horizonknowledge:printing_house",
+    "count": 1
+  }
+}
+21. Loot Table JSONs
+21.1 Museum Block Drop
+data/horizonknowledge/loot_tables/blocks/museum.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonknowledge:museum",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "source": "block_entity",
+              "include": ["horizonknowledge:displays", "horizonknowledge:prestige"]
+            }
+          ]
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+22. Tag JSONs
+22.1 Artifacts Tag
+data/horizonknowledge/tags/items/artifacts.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonknowledge:flint_tool",
+    "horizonknowledge:clay_tablet",
+    "horizonknowledge:bronze_figurine",
+    "horizonknowledge:iron_relic",
+    "horizonknowledge:ancient_scroll",
+    "horizonknowledge:roman_coin",
+    "horizonknowledge:medieval_manuscript",
+    "horizonknowledge:lost_technology_blueprint",
+    "horizonknowledge:alien_artifact",
+    "horizonknowledge:core_fragment"
+  ]
+}
+22.2 Knowledge Buildings Block Tag
+data/horizonknowledge/tags/blocks/knowledge_buildings.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonknowledge:archive",
+    "horizonknowledge:scriptorium",
+    "horizonknowledge:academy",
+    "horizonknowledge:observatory",
+    "horizonknowledge:printing_house",
+    "horizonknowledge:museum",
+    "horizonknowledge:research_institute",
+    "horizonknowledge:supercomputer_lab"
+  ]
+}
+23. Lang / Localization
+assets/horizonknowledge/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonknowledge.artifacts": "HorizonKnowledge - Artifacts",
+  "itemGroup.horizonknowledge.buildings": "HorizonKnowledge - Infrastructure",
+
+  "block.horizonknowledge.archive": "Archive",
+  "block.horizonknowledge.scriptorium": "Scriptorium",
+  "block.horizonknowledge.academy": "Academy",
+  "block.horizonknowledge.observatory": "Observatory",
+  "block.horizonknowledge.printing_house": "Printing House",
+  "block.horizonknowledge.museum": "Museum",
+  "block.horizonknowledge.research_institute": "Research Institute",
+  "block.horizonknowledge.supercomputer_lab": "Supercomputer Lab",
+
+  "item.horizonknowledge.flint_tool": "Ancient Flint Tool",
+  "item.horizonknowledge.clay_tablet": "Cuneiform Clay Tablet",
+  "item.horizonknowledge.bronze_figurine": "Bronze Figurine",
+  "item.horizonknowledge.iron_relic": "Rusted Iron Relic",
+  "item.horizonknowledge.ancient_scroll": "Ancient Scroll",
+  "item.horizonknowledge.roman_coin": "Ancient Coin",
+  "item.horizonknowledge.medieval_manuscript": "Illuminated Manuscript",
+  "item.horizonknowledge.lost_technology_blueprint": "Lost Technology Blueprint",
+  "item.horizonknowledge.alien_artifact": "Unidentified Alien Artifact",
+  "item.horizonknowledge.core_fragment": "Reality Core Fragment",
+
+  "philosophy.stoicism": "Stoicism",
+  "philosophy.epicureanism": "Epicureanism",
+  "philosophy.confucianism": "Confucianism",
+  "philosophy.taoism": "Taoism",
+  "philosophy.utilitarianism": "Utilitarianism",
+  "philosophy.nihilism": "Nihilism",
+  "philosophy.pragmatism": "Pragmatism",
+  "philosophy.existentialism": "Existentialism",
+  "philosophy.empiricism": "Empiricism",
+  "philosophy.rationalism": "Rationalism",
+
+  "network.messenger": "Messenger System",
+  "network.postal": "Postal Road",
+  "network.semaphore": "Semaphore Tower",
+  "network.telegraph": "Telegraph Line",
+  "network.telephone": "Telephone Network",
+  "network.radio": "Radio Broadcast",
+  "network.television": "Television Network",
+  "network.satellite": "Satellite Internet",
+  "network.quantum": "Quantum Communication",
+
+  "advancements.horizonknowledge.root.title": "Seeker of Truth",
+  "advancements.horizonknowledge.root.desc": "Excavate your first artifact.",
+  "advancements.horizonknowledge.museum.title": "It Belongs In A Museum!",
+  "advancements.horizonknowledge.museum.desc": "Place an artifact into a Museum display."
+}
+24. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonknowledge'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonknowledge', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+    implementation "com.horizonpack:horizonculture:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+25. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonknowledge"
+    version = "1.0.0"
+    displayName = "Horizon Knowledge & Ethics"
+    description = """
+Implements archaeology, moral philosophies, and global communication networks for the Horizon Corebreach modpack. 
+Unearth 10 artifact types, align with 10 philosophical schools, and upgrade through 9 communication tiers.
+"""
+    logoFile = "horizonknowledge.png"
+
+[[dependencies.horizonknowledge]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonknowledge]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonknowledge]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonknowledge]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonknowledge]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonknowledge]]
+    modId = "horizonculture"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+26. Critical Implementation Implementation Notes
+Artifact Data Component Validation: The ArtifactData component stores the absolute BlockPos and UUID of the discoverer. To prevent exploiters from spoofing network packets to forge artifact authenticity (inflating museum prestige), the component is strictly immutable. If a player attempts to merge artifacts in an anvil, the output strips the ArtifactData component entirely.
+Museum Prestige Ticking Strategy: The MuseumBlockEntity evaluates its inventory every 24,000 ticks. To avoid chunk-unload synchronization bugs, it does not directly query horizonsociety settlements. Instead, it adds to an internal accumulatedPrestige float. When a settlement's daily AI Director scan passes over the chunk, the settlement pulls the prestige directly and clears the buffer.
+Communication Network Calculations: CommunicationEngine.calculateTransmissionDelay() handles information lag between Civilizations. Because distances can span millions of blocks, the math uses Math.max(sourceSpeed, targetSpeed). If both networks are messenger_system, the delay is purely Euclidean block distance divided by base human speed.
+Data Pack Extensibility of Philosophies: PhilosophicalSchool utilizes a ResourceKey<Registry<T>> built with .sync(true). Modpack developers can add entirely custom ethical frameworks (e.g., Objectivism) by simply dropping a new JSON into the philosophical_schools datapack folder. The HUD overlay will automatically populate it.
+Ethics Inter-Mod Routing: PhilosophyEngine.processMoralAction() acts as a receiver for events fired globally by horizoncore and horizonsociety. Do not hard-reference vanilla Player interactions (like animal killing) here directly; rely on custom tags and MoralDecisionEvent dispatches to maintain clean boundaries between modules.
+Carbon Dating NBT Math: ArtifactData.estimatedAgeYears generates an age based on the depth (Y-level) at which it was excavated, scaled by the chunk's HorizonWorld geological profile. This guarantees artifacts excavated from deep shale layers reliably date older than those in surface loam.
+Supercomputer Energy Drain Integration: The SupercomputerLabBlockEntity requires horizonpower. Use level.getCapability(Capabilities.EnergyStorage.BLOCK, pos, null) to check for available RF. If power drops to 0, the machine's state boolean flips, severing its communication network boost.
+Player Ethics Serialization: Player alignments to various philosophies are saved within KnowledgeSavedData rather than IHorizonPlayerData to allow the Civilization AI Director to scan regional moral trends quickly without having to load offline player capability files.
