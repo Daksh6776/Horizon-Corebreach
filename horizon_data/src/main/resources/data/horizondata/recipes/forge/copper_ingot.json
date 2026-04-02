@@ -1,0 +1,1 @@
+{"type":"horizondata:forge_recipe","fuel":{"tag":"horizondata:forge_fuels"},"input":{"item":"horizondata:copper_dust"},"min_heat_celsius":700,"processing_ticks":600,"result":{"id":"horizondata:copper_ingot","count":1}}
