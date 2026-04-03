@@ -1,0 +1,1 @@
+{"type":"horizondata:crucible_recipe","inputs":[{"item":"horizondata:copper_ingot","count":2},{"item":"horizondata:zinc_ingot","count":1}],"fuel":{"tag":"c:coals"},"min_heat_celsius":900,"processing_ticks":1000,"result":{"id":"horizondata:brass_ingot","count":3},"required_age":"copper_age"}

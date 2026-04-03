@@ -1,0 +1,1 @@
+{"type":"horizondata:grindstone_recipe","input":{"item":"horizondata:raw_gold"},"tool":{"tag":"horizondata:hammers"},"processing_ticks":100,"result":{"id":"horizondata:gold_dust","count":2}}

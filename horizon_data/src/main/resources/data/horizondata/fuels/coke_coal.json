@@ -1,0 +1,11 @@
+﻿{
+  "fuel_id": "coke_coal",
+  "type": "SOLID",
+  "heat_kj": 28000,
+  "burn_duration_ticks": 2400,
+  "max_temperature_celsius": 1200,
+  "pollution": "LOW",
+  "age_unlock": "IRON_AGE",
+  "requires_storage": false,
+  "is_explosive": false
+}
