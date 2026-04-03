@@ -1,0 +1,87 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' // No version here! It inherits from the root.
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizoncore'
+
+base {
+    archivesName = 'horizoncore'
+}
+
+repositories {
+    mavenCentral()
+    maven { name = "Max Henkel"; url = "https://maven.maxhenkel.de/repository/public" }
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
+    maven {
+        name = "ModMaven"
+        url = "https://modmaven.dev"
+    }
+
+    // Maven for Jade (WAILA alternative)
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
+    maven {
+        name = "BlameJared"
+        url = "https://maven.blamejared.com/"
+    }
+}
+
+dependencies {
+    // API only for compilation
+    compileOnly "de.maxhenkel.voicechat:voicechat-api:2.5.0"
+
+    // Use compileOnly for the API so you can code against it
+    compileOnly "mezz.jei:jei-1.21.1-neoforge-api:19.21.0.247"
+
+    // Use runtimeOnly to actually see JEI in your development environment
+    runtimeOnly "mezz.jei:jei-1.21.1-neoforge:19.21.0.247"
+
+    // Jade (compile against the API, run with the full mod)
+    compileOnly "maven.modrinth:jade:15.1.5+neoforge"
+    runtimeOnly "maven.modrinth:jade:15.1.5+neoforge"
+}
+
+neoForge {
+    version = "21.1.65"
+
+    mods {
+        horizoncore {
+            sourceSet project.sourceSets.main
+        }
+    }
+
+    runs {
+        client {
+            client()
+            // This isolates the mod to ONLY the client run.
+            // It prevents the NullPointerException in DataGen.
+            dependencies {
+                runtimeOnly "maven.modrinth:simple-voice-chat:neoforge-1.21.1-2.5.21"
+            }
+        }
+        server {
+            server()
+            programArgument '--nogui'
+        }
+        data {
+            data()
+            programArguments.addAll([
+                    '--mod', 'horizoncore',
+                    '--all',
+                    '--output', file('src/generated/resources/').getAbsolutePath(),
+                    '--existing', file('src/main/resources/').getAbsolutePath()
+            ])
+        }
+    }
+}

@@ -1,0 +1,1638 @@
+# HorizonBiome — Detailed Technical Specification
+**Mod ID:** `horizonbiome`  
+**Version:** 1.0.0  
+**Platform:** NeoForge 1.21.1 / Java 21  
+**Role:** Flora, Fauna, Microbiology, and Ecology — the living layer of the world  
+**Absorbed mods:** HorizonFlora, HorizonFauna, HorizonMicrobiology  
+**Depends on:** `horizoncore`, `horizondata`, `horizonworld`
+
+---
+
+## Table of Contents
+1. [Overview & Responsibilities](#1-overview--responsibilities)
+2. [File & Package Structure](#2-file--package-structure)
+3. [Mod Entry Point](#3-mod-entry-point)
+4. [Soil & Agriculture System](#4-soil--agriculture-system)
+5. [Flora & Crop Registry](#5-flora--crop-registry)
+6. [Fauna & Animal Registry](#6-fauna--animal-registry)
+7. [Microbiology & Disease System](#7-microbiology--disease-system)
+8. [Animal AI & Domestication](#8-animal-ai--domestication)
+9. [Carcass & Decomposition System](#9-carcass--decomposition-system)
+10. [Biome Generation Integration](#10-biome-generation-integration)
+11. [Event Hooks](#11-event-hooks)
+12. [Network Packets](#12-network-packets)
+13. [Configuration](#13-configuration)
+14. [Data Pack Integration](#14-data-pack-integration)
+15. [Blockstate & Model JSONs](#15-blockstate--model-jsons)
+16. [Recipe JSONs](#16-recipe-jsons)
+17. [Loot Table JSONs](#17-loot-table-jsons)
+18. [Tag JSONs](#18-tag-jsons)
+19. [Lang / Localization](#19-lang--localization)
+20. [build.gradle](#20-buildgradle)
+21. [neoforge.mods.toml](#21-neoforgemodstom)
+22. [Critical Implementation Notes](#22-critical-implementation-notes)
+
+---
+
+## 1. Overview & Responsibilities
+
+HorizonBiome implements the **biological and ecological simulation** for the Horizon Corebreach modpack. It populates the geological canvas provided by `horizonworld` with interactive life.
+
+- **Soil Systems:** 10 distinct soil types with specific nutrient retention, water capacity, and crop yield modifiers.
+- **Flora & Crops:** 50 distinct plant species (wild plants, staple crops, and fruit trees) that obey climate zones, seasons, and soil mechanics.
+- **Fauna & Wildlife:** 40 distinct animal species with complex AI, including predator-prey dynamics, migration, pack behavior, and a multi-stage domestication/breeding system.
+- **Decomposition:** A dedicated Carcass entity system where dead animals progress through stages (fresh, decomposing, rotten, skeleton) attracting scavengers and generating disease vectors.
+- **Microbiology:** 18 historically accurate diseases that infect players and NPCs via vectors (water, ticks, carcasses, weather, nutrition deficiency).
+
+---
+
+## 2. File & Package Structure
+
+horizon_biome/
+├── src/main/java/com/horizonpack/horizonbiome/
+│   ├── core/
+│   │   ├── HorizonBiome.java
+│   │   ├── BiomeRegistries.java
+│   │   └── BiomeConfig.java
+│   ├── data/
+│   │   ├── SoilNutrientData.java
+│   │   ├── CropGrowthData.java
+│   │   └── DiseaseVector.java
+│   ├── blocks/
+│   │   ├── soils/
+│   │   │   ├── ClaySoilBlock.java
+│   │   │   ├── SandySoilBlock.java
+│   │   │   ├── LoamySoilBlock.java
+│   │   │   ├── SiltySoilBlock.java
+│   │   │   ├── PeatySoilBlock.java
+│   │   │   ├── ChalkySoilBlock.java
+│   │   │   ├── SalineSoilBlock.java
+│   │   │   ├── VolcanicAshSoilBlock.java
+│   │   │   ├── PermafrostSoilBlock.java
+│   │   │   └── LateriteSoilBlock.java
+│   │   ├── flora/
+│   │   │   ├── wild/
+│   │   │   │   ├── FernBlock.java
+│   │   │   │   ├── NettleBlock.java
+│   │   │   │   ├── CloverBlock.java
+│   │   │   │   ├── ThistleBlock.java
+│   │   │   │   ├── FoxgloveBlock.java
+│   │   │   │   ├── NightshadeBlock.java
+│   │   │   │   ├── ChamomileBlock.java
+│   │   │   │   ├── LavenderBlock.java
+│   │   │   │   ├── SageBlock.java
+│   │   │   │   ├── MintBlock.java
+│   │   │   │   ├── DandelionBlock.java
+│   │   │   │   ├── MushroomRedBlock.java
+│   │   │   │   ├── MushroomBrownBlock.java
+│   │   │   │   ├── CattailBlock.java
+│   │   │   │   └── ReedBlock.java
+│   │   │   ├── crops/
+│   │   │   │   ├── WheatCropBlock.java
+│   │   │   │   ├── RiceCropBlock.java
+│   │   │   │   ├── CornCropBlock.java
+│   │   │   │   ├── BarleyCropBlock.java
+│   │   │   │   ├── OatsCropBlock.java
+│   │   │   │   ├── MilletCropBlock.java
+│   │   │   │   ├── PotatoCropBlock.java
+│   │   │   │   ├── CarrotCropBlock.java
+│   │   │   │   ├── OnionCropBlock.java
+│   │   │   │   ├── GarlicCropBlock.java
+│   │   │   │   ├── TomatoCropBlock.java
+│   │   │   │   ├── LettuceCropBlock.java
+│   │   │   │   ├── CabbageCropBlock.java
+│   │   │   │   ├── SpinachCropBlock.java
+│   │   │   │   ├── PumpkinCropBlock.java
+│   │   │   │   ├── WatermelonCropBlock.java
+│   │   │   │   ├── AppleCropBlock.java
+│   │   │   │   ├── OrangeCropBlock.java
+│   │   │   │   ├── GrapeCropBlock.java
+│   │   │   │   ├── StrawberryCropBlock.java
+│   │   │   │   ├── BananaCropBlock.java
+│   │   │   │   ├── CocoaCropBlock.java
+│   │   │   │   ├── CoffeeCropBlock.java
+│   │   │   │   ├── TeaCropBlock.java
+│   │   │   │   ├── SugarcaneCropBlock.java
+│   │   │   │   ├── CottonCropBlock.java
+│   │   │   │   ├── FlaxCropBlock.java
+│   │   │   │   ├── HempCropBlock.java
+│   │   │   │   └── TobaccoCropBlock.java
+│   │   │   └── trees/
+│   │   │       ├── AppleTreeBlock.java
+│   │   │       ├── OrangeTreeBlock.java
+│   │   │       ├── LemonTreeBlock.java
+│   │   │       ├── CherryTreeBlock.java
+│   │   │       ├── OliveTreeBlock.java
+│   │   │       └── CoconutPalmBlock.java
+│   ├── items/
+│   │   ├── CropSeedItem.java
+│   │   ├── MedicineItem.java
+│   │   └── CarcassHarvestItem.java
+│   ├── entities/
+│   │   ├── CarcassEntity.java
+│   │   ├── herbivores/
+│   │   │   ├── DeerEntity.java
+│   │   │   ├── HorseEntity.java
+│   │   │   ├── CattleEntity.java
+│   │   │   ├── SheepEntity.java
+│   │   │   ├── GoatEntity.java
+│   │   │   ├── ElephantEntity.java
+│   │   │   ├── RabbitEntity.java
+│   │   │   ├── BisonEntity.java
+│   │   │   ├── CamelEntity.java
+│   │   │   ├── DonkeyEntity.java
+│   │   │   ├── LlamaEntity.java
+│   │   │   └── OxenEntity.java
+│   │   ├── carnivores/
+│   │   │   ├── WolfEntity.java
+│   │   │   ├── BearEntity.java
+│   │   │   ├── LionEntity.java
+│   │   │   ├── TigerEntity.java
+│   │   │   ├── CrocodileEntity.java
+│   │   │   ├── SharkEntity.java
+│   │   │   ├── EagleEntity.java
+│   │   │   ├── HyenaEntity.java
+│   │   │   └── VultureEntity.java
+│   │   ├── omnivores/
+│   │   │   ├── PigEntity.java
+│   │   │   ├── ChickenEntity.java
+│   │   │   ├── DuckEntity.java
+│   │   │   ├── BoarEntity.java
+│   │   │   └── CrowEntity.java
+│   │   ├── aquatic/
+│   │   │   ├── SalmonEntity.java
+│   │   │   ├── TunaEntity.java
+│   │   │   ├── CodEntity.java
+│   │   │   ├── DolphinEntity.java
+│   │   │   ├── WhaleEntity.java
+│   │   │   ├── GiantSquidEntity.java
+│   │   │   ├── CrabEntity.java
+│   │   │   ├── JellyfishEntity.java
+│   │   │   └── SeaTurtleEntity.java
+│   │   └── insects/
+│   │       ├── BeeEntity.java
+│   │       ├── AntEntity.java
+│   │       ├── ButterflyEntity.java
+│   │       ├── MothEntity.java
+│   │       └── FireflyEntity.java
+│   ├── ai/
+│   │   ├── PredatorHuntGoal.java
+│   │   ├── HerdGrazeGoal.java
+│   │   ├── ScavengeCarcassGoal.java
+│   │   └── MigrationGoal.java
+│   ├── systems/
+│   │   ├── DiseaseEngine.java
+│   │   ├── DecompositionEngine.java
+│   │   └── AgricultureEngine.java
+│   ├── events/
+│   │   ├── BiomeEventHandlers.java
+│   │   └── custom/
+│   │       ├── DiseaseContractEvent.java
+│   │       ├── CropHarvestEvent.java
+│   │       └── AnimalTameEvent.java
+│   ├── network/
+│   │   ├── BiomePacketHandler.java
+│   │   └── packets/
+│   │       └── SyncDiseasePacket.java
+│   ├── client/
+│   │   ├── render/
+│   │   │   ├── CarcassRenderer.java
+│   │   │   ├── WildAnimalRenderer.java
+│   │   │   └── InsectSwarmRenderer.java
+│   │   └── gui/
+│   │       └── DiseaseHudOverlay.java
+│   └── utils/
+│       ├── BreedingHelper.java
+│       └── InfectionHelper.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonbiome/
+│   │   ├── blockstates/
+│   │   ├── models/block/
+│   │   ├── models/item/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonbiome/
+│       ├── recipes/
+│       ├── loot_tables/
+│       ├── tags/
+│       ├── neoforge/biome_modifier/
+│       └── advancements/
+└── build.gradle
+
+---
+
+## 3. Mod Entry Point
+
+**File:** `core/HorizonBiome.java`
+
+```java
+package com.horizonpack.horizonbiome.core;
+
+import com.horizonpack.horizonbiome.events.BiomeEventHandlers;
+import com.horizonpack.horizonbiome.network.BiomePacketHandler;
+import com.horizonpack.horizonbiome.systems.DiseaseEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonBiome.MODID)
+public class HorizonBiome {
+    public static final String MODID = "horizonbiome";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonBiome(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, BiomeConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, BiomeConfig.CLIENT_SPEC);
+
+        BiomeRegistries.BLOCKS.register(modEventBus);
+        BiomeRegistries.ITEMS.register(modEventBus);
+        BiomeRegistries.ENTITY_TYPES.register(modEventBus);
+        BiomeRegistries.CREATIVE_TABS.register(modEventBus);
+        
+        // Register custom diseases to HorizonCore's registry
+        BiomeRegistries.DISEASES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(BiomeRegistries::registerEntityAttributes);
+        modEventBus.addListener(BiomePacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(BiomeEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            DiseaseEngine.init();
+            BiomeRegistries.registerCompostables();
+        });
+    }
+}
+4. Soil & Agriculture System
+4.1 Soil Registry
+File: blocks/soils/SoilRegistry.java
+HorizonBiome implements 10 distinct soil types. Each has varying levels of Nitrogen, Phosphorus, Potassium (NPK), water retention, and drainage.
+code
+Java
+package com.horizonpack.horizonbiome.blocks.soils;
+
+import com.horizonpack.horizonbiome.core.BiomeRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class SoilRegistry {
+    
+    public static final DeferredBlock<Block> CLAY_SOIL = BiomeRegistries.BLOCKS.registerBlock("clay_soil", 
+        () -> new ClaySoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.CLAY).strength(0.6f).sound(SoundType.GRAVEL)));
+        
+    public static final DeferredBlock<Block> SANDY_SOIL = BiomeRegistries.BLOCKS.registerBlock("sandy_soil", 
+        () -> new SandySoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.SAND).strength(0.5f).sound(SoundType.SAND)));
+        
+    public static final DeferredBlock<Block> LOAMY_SOIL = BiomeRegistries.BLOCKS.registerBlock("loamy_soil", 
+        () -> new LoamySoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.DIRT).strength(0.6f).sound(SoundType.GRAVEL)));
+        
+    public static final DeferredBlock<Block> SILTY_SOIL = BiomeRegistries.BLOCKS.registerBlock("silty_soil", 
+        () -> new SiltySoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.PODZOL).strength(0.5f).sound(SoundType.MUD)));
+        
+    public static final DeferredBlock<Block> PEATY_SOIL = BiomeRegistries.BLOCKS.registerBlock("peaty_soil", 
+        () -> new PeatySoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN).strength(0.5f).sound(SoundType.MOSS)));
+        
+    public static final DeferredBlock<Block> CHALKY_SOIL = BiomeRegistries.BLOCKS.registerBlock("chalky_soil", 
+        () -> new ChalkySoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.QUARTZ).strength(0.8f).sound(SoundType.CALCITE)));
+        
+    public static final DeferredBlock<Block> SALINE_SOIL = BiomeRegistries.BLOCKS.registerBlock("saline_soil", 
+        () -> new SalineSoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_WHITE).strength(0.7f).sound(SoundType.SAND)));
+        
+    public static final DeferredBlock<Block> VOLCANIC_ASH_SOIL = BiomeRegistries.BLOCKS.registerBlock("volcanic_ash_soil", 
+        () -> new VolcanicAshSoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_GRAY).strength(0.5f).sound(SoundType.SAND)));
+        
+    public static final DeferredBlock<Block> PERMAFROST_SOIL = BiomeRegistries.BLOCKS.registerBlock("permafrost_soil", 
+        () -> new PermafrostSoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.ICE).strength(1.2f).sound(SoundType.GLASS)));
+        
+    public static final DeferredBlock<Block> LATERITE_SOIL = BiomeRegistries.BLOCKS.registerBlock("laterite_soil", 
+        () -> new LateriteSoilBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(0.9f).sound(SoundType.STONE)));
+
+    public static void init() {
+        // Triggers class load
+    }
+}
+Total Soils registered: 10
+4.2 Soil Nutrient Data
+File: data/SoilNutrientData.java
+code
+Java
+package com.horizonpack.horizonbiome.data;
+
+import net.minecraft.world.level.block.Block;
+
+public record SoilNutrientData(
+    float nitrogen,
+    float phosphorus,
+    float potassium,
+    float waterRetention,
+    float drainage,
+    float baseCropYieldMultiplier
+) {
+    public static SoilNutrientData getFor(Block block) {
+        String id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block).getPath();
+        return switch(id) {
+            case "clay_soil" -> new SoilNutrientData(0.4f, 0.5f, 0.6f, 0.9f, 0.1f, 0.8f);
+            case "sandy_soil" -> new SoilNutrientData(0.2f, 0.2f, 0.3f, 0.2f, 0.9f, 0.5f);
+            case "loamy_soil" -> new SoilNutrientData(0.8f, 0.8f, 0.8f, 0.7f, 0.7f, 1.2f);
+            case "silty_soil" -> new SoilNutrientData(0.6f, 0.5f, 0.5f, 0.8f, 0.4f, 1.0f);
+            case "peaty_soil" -> new SoilNutrientData(0.9f, 0.2f, 0.2f, 0.95f, 0.2f, 1.1f);
+            case "chalky_soil" -> new SoilNutrientData(0.3f, 0.6f, 0.4f, 0.3f, 0.8f, 0.6f);
+            case "saline_soil" -> new SoilNutrientData(0.1f, 0.1f, 0.1f, 0.5f, 0.5f, 0.1f);
+            case "volcanic_ash_soil" -> new SoilNutrientData(0.9f, 0.9f, 0.9f, 0.6f, 0.6f, 1.5f);
+            case "permafrost_soil" -> new SoilNutrientData(0.1f, 0.1f, 0.1f, 1.0f, 0.0f, 0.0f);
+            case "laterite_soil" -> new SoilNutrientData(0.2f, 0.8f, 0.1f, 0.4f, 0.6f, 0.4f);
+            default -> new SoilNutrientData(0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 1.0f);
+        };
+    }
+}
+5. Flora & Crop Registry
+File: blocks/flora/FloraRegistry.java
+All 50 plants, crops, and trees are registered here.
+code
+Java
+package com.horizonpack.horizonbiome.blocks.flora;
+
+import com.horizonpack.horizonbiome.core.BiomeRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.level.material.PushReaction;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class FloraRegistry {
+    
+    private static BlockBehaviour.Properties wildPlantProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.PLANT).noCollission().instabreak().sound(SoundType.GRASS).pushReaction(PushReaction.DESTROY);
+    }
+    
+    private static BlockBehaviour.Properties cropProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.PLANT).noCollission().randomTicks().instabreak().sound(SoundType.CROP).pushReaction(PushReaction.DESTROY);
+    }
+    
+    private static BlockBehaviour.Properties treeProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f).sound(SoundType.WOOD);
+    }
+
+    // ── WILD PLANTS (15) ──────────────────────────────────────────────────────
+    public static final DeferredBlock<Block> FERN = BiomeRegistries.BLOCKS.registerBlock("fern", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> NETTLE = BiomeRegistries.BLOCKS.registerBlock("nettle", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> CLOVER = BiomeRegistries.BLOCKS.registerBlock("clover", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> THISTLE = BiomeRegistries.BLOCKS.registerBlock("thistle", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> FOXGLOVE = BiomeRegistries.BLOCKS.registerBlock("foxglove", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> NIGHTSHADE = BiomeRegistries.BLOCKS.registerBlock("nightshade", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> CHAMOMILE = BiomeRegistries.BLOCKS.registerBlock("chamomile", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> LAVENDER = BiomeRegistries.BLOCKS.registerBlock("lavender", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> SAGE = BiomeRegistries.BLOCKS.registerBlock("sage", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> MINT = BiomeRegistries.BLOCKS.registerBlock("mint", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> DANDELION = BiomeRegistries.BLOCKS.registerBlock("dandelion", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> MUSHROOM_RED = BiomeRegistries.BLOCKS.registerBlock("mushroom_red", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> MUSHROOM_BROWN = BiomeRegistries.BLOCKS.registerBlock("mushroom_brown", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> CATTAIL = BiomeRegistries.BLOCKS.registerBlock("cattail", () -> new WildPlantBlock(wildPlantProps()));
+    public static final DeferredBlock<Block> REED = BiomeRegistries.BLOCKS.registerBlock("reed", () -> new WildPlantBlock(wildPlantProps()));
+
+    // ── CROPS (29) ────────────────────────────────────────────────────────────
+    public static final DeferredBlock<Block> WHEAT_CROP = BiomeRegistries.BLOCKS.registerBlock("wheat_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> RICE_CROP = BiomeRegistries.BLOCKS.registerBlock("rice_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> CORN_CROP = BiomeRegistries.BLOCKS.registerBlock("corn_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> BARLEY_CROP = BiomeRegistries.BLOCKS.registerBlock("barley_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> OATS_CROP = BiomeRegistries.BLOCKS.registerBlock("oats_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> MILLET_CROP = BiomeRegistries.BLOCKS.registerBlock("millet_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> POTATO_CROP = BiomeRegistries.BLOCKS.registerBlock("potato_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> CARROT_CROP = BiomeRegistries.BLOCKS.registerBlock("carrot_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> ONION_CROP = BiomeRegistries.BLOCKS.registerBlock("onion_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> GARLIC_CROP = BiomeRegistries.BLOCKS.registerBlock("garlic_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> TOMATO_CROP = BiomeRegistries.BLOCKS.registerBlock("tomato_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> LETTUCE_CROP = BiomeRegistries.BLOCKS.registerBlock("lettuce_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> CABBAGE_CROP = BiomeRegistries.BLOCKS.registerBlock("cabbage_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> SPINACH_CROP = BiomeRegistries.BLOCKS.registerBlock("spinach_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> PUMPKIN_CROP = BiomeRegistries.BLOCKS.registerBlock("pumpkin_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> WATERMELON_CROP = BiomeRegistries.BLOCKS.registerBlock("watermelon_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> APPLE_CROP = BiomeRegistries.BLOCKS.registerBlock("apple_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> ORANGE_CROP = BiomeRegistries.BLOCKS.registerBlock("orange_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> GRAPE_CROP = BiomeRegistries.BLOCKS.registerBlock("grape_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> STRAWBERRY_CROP = BiomeRegistries.BLOCKS.registerBlock("strawberry_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> BANANA_CROP = BiomeRegistries.BLOCKS.registerBlock("banana_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> COCOA_CROP = BiomeRegistries.BLOCKS.registerBlock("cocoa_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> COFFEE_CROP = BiomeRegistries.BLOCKS.registerBlock("coffee_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> TEA_CROP = BiomeRegistries.BLOCKS.registerBlock("tea_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> SUGARCANE_CROP = BiomeRegistries.BLOCKS.registerBlock("sugarcane_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> COTTON_CROP = BiomeRegistries.BLOCKS.registerBlock("cotton_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> FLAX_CROP = BiomeRegistries.BLOCKS.registerBlock("flax_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> HEMP_CROP = BiomeRegistries.BLOCKS.registerBlock("hemp_crop", () -> new HorizonCropBlock(cropProps()));
+    public static final DeferredBlock<Block> TOBACCO_CROP = BiomeRegistries.BLOCKS.registerBlock("tobacco_crop", () -> new HorizonCropBlock(cropProps()));
+
+    // ── FRUIT TREES (6) ───────────────────────────────────────────────────────
+    public static final DeferredBlock<Block> APPLE_TREE = BiomeRegistries.BLOCKS.registerBlock("apple_tree", () -> new HorizonFruitTreeBlock(treeProps()));
+    public static final DeferredBlock<Block> ORANGE_TREE = BiomeRegistries.BLOCKS.registerBlock("orange_tree", () -> new HorizonFruitTreeBlock(treeProps()));
+    public static final DeferredBlock<Block> LEMON_TREE = BiomeRegistries.BLOCKS.registerBlock("lemon_tree", () -> new HorizonFruitTreeBlock(treeProps()));
+    public static final DeferredBlock<Block> CHERRY_TREE = BiomeRegistries.BLOCKS.registerBlock("cherry_tree", () -> new HorizonFruitTreeBlock(treeProps()));
+    public static final DeferredBlock<Block> OLIVE_TREE = BiomeRegistries.BLOCKS.registerBlock("olive_tree", () -> new HorizonFruitTreeBlock(treeProps()));
+    public static final DeferredBlock<Block> COCONUT_PALM = BiomeRegistries.BLOCKS.registerBlock("coconut_palm", () -> new HorizonFruitTreeBlock(treeProps()));
+
+    public static void init() {
+        // Register seeds in BiomeRegistries.ITEMS
+    }
+}
+Total Plants/Crops registered: 50
+6. Fauna & Animal Registry
+File: entities/FaunaRegistry.java
+Registers exactly 40 distinct animal entities spanning herbivores, carnivores, omnivores, aquatics, and insects.
+code
+Java
+package com.horizonpack.horizonbiome.entities;
+
+import com.horizonpack.horizonbiome.core.BiomeRegistries;
+import com.horizonpack.horizonbiome.entities.herbivores.*;
+import com.horizonpack.horizonbiome.entities.carnivores.*;
+import com.horizonpack.horizonbiome.entities.omnivores.*;
+import com.horizonpack.horizonbiome.entities.aquatic.*;
+import com.horizonpack.horizonbiome.entities.insects.*;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public class FaunaRegistry {
+
+    // ── HERBIVORES (12) ───────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<DeerEntity>> DEER = register("deer", DeerEntity::new, 0.9f, 1.4f);
+    public static final DeferredHolder<EntityType<?>, EntityType<HorseEntity>> HORSE = register("horse", HorseEntity::new, 1.4f, 1.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<CattleEntity>> CATTLE = register("cattle", CattleEntity::new, 1.5f, 1.4f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SheepEntity>> SHEEP = register("sheep", SheepEntity::new, 0.9f, 1.3f);
+    public static final DeferredHolder<EntityType<?>, EntityType<GoatEntity>> GOAT = register("goat", GoatEntity::new, 0.9f, 1.3f);
+    public static final DeferredHolder<EntityType<?>, EntityType<ElephantEntity>> ELEPHANT = register("elephant", ElephantEntity::new, 3.5f, 3.2f);
+    public static final DeferredHolder<EntityType<?>, EntityType<RabbitEntity>> RABBIT = register("rabbit", RabbitEntity::new, 0.4f, 0.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<BisonEntity>> BISON = register("bison", BisonEntity::new, 1.8f, 1.7f);
+    public static final DeferredHolder<EntityType<?>, EntityType<CamelEntity>> CAMEL = register("camel", CamelEntity::new, 1.7f, 2.4f);
+    public static final DeferredHolder<EntityType<?>, EntityType<DonkeyEntity>> DONKEY = register("donkey", DonkeyEntity::new, 1.4f, 1.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<LlamaEntity>> LLAMA = register("llama", LlamaEntity::new, 0.9f, 1.9f);
+    public static final DeferredHolder<EntityType<?>, EntityType<OxenEntity>> OXEN = register("oxen", OxenEntity::new, 1.6f, 1.5f);
+
+    // ── CARNIVORES (9) ────────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<WolfEntity>> WOLF = register("wolf", WolfEntity::new, 0.6f, 0.85f);
+    public static final DeferredHolder<EntityType<?>, EntityType<BearEntity>> BEAR = register("bear", BearEntity::new, 1.4f, 1.4f);
+    public static final DeferredHolder<EntityType<?>, EntityType<LionEntity>> LION = register("lion", LionEntity::new, 1.2f, 1.1f);
+    public static final DeferredHolder<EntityType<?>, EntityType<TigerEntity>> TIGER = register("tiger", TigerEntity::new, 1.2f, 1.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<CrocodileEntity>> CROCODILE = register("crocodile", CrocodileEntity::new, 2.0f, 0.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SharkEntity>> SHARK = registerWater("shark", SharkEntity::new, 1.5f, 0.8f);
+    public static final DeferredHolder<EntityType<?>, EntityType<EagleEntity>> EAGLE = registerFlying("eagle", EagleEntity::new, 0.5f, 0.9f);
+    public static final DeferredHolder<EntityType<?>, EntityType<HyenaEntity>> HYENA = register("hyena", HyenaEntity::new, 0.8f, 0.9f);
+    public static final DeferredHolder<EntityType<?>, EntityType<VultureEntity>> VULTURE = registerFlying("vulture", VultureEntity::new, 0.6f, 0.8f);
+
+    // ── OMNIVORES (5) ─────────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<PigEntity>> PIG = register("pig", PigEntity::new, 0.9f, 0.9f);
+    public static final DeferredHolder<EntityType<?>, EntityType<ChickenEntity>> CHICKEN = register("chicken", ChickenEntity::new, 0.4f, 0.7f);
+    public static final DeferredHolder<EntityType<?>, EntityType<DuckEntity>> DUCK = register("duck", DuckEntity::new, 0.4f, 0.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<BoarEntity>> BOAR = register("boar", BoarEntity::new, 1.1f, 1.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<CrowEntity>> CROW = registerFlying("crow", CrowEntity::new, 0.3f, 0.3f);
+
+    // ── AQUATIC (9) ───────────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<SalmonEntity>> SALMON = registerWater("salmon", SalmonEntity::new, 0.7f, 0.4f);
+    public static final DeferredHolder<EntityType<?>, EntityType<TunaEntity>> TUNA = registerWater("tuna", TunaEntity::new, 1.2f, 0.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<CodEntity>> COD = registerWater("cod", CodEntity::new, 0.5f, 0.3f);
+    public static final DeferredHolder<EntityType<?>, EntityType<DolphinEntity>> DOLPHIN = registerWater("dolphin", DolphinEntity::new, 0.9f, 0.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<WhaleEntity>> WHALE = registerWater("whale", WhaleEntity::new, 6.0f, 3.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<GiantSquidEntity>> GIANT_SQUID = registerWater("giant_squid", GiantSquidEntity::new, 2.5f, 2.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<CrabEntity>> CRAB = registerWater("crab", CrabEntity::new, 0.5f, 0.4f);
+    public static final DeferredHolder<EntityType<?>, EntityType<JellyfishEntity>> JELLYFISH = registerWater("jellyfish", JellyfishEntity::new, 0.6f, 0.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SeaTurtleEntity>> SEA_TURTLE = registerWater("sea_turtle", SeaTurtleEntity::new, 1.2f, 0.4f);
+
+    // ── INSECTS (5) ───────────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<BeeEntity>> BEE = registerFlying("bee", BeeEntity::new, 0.3f, 0.3f);
+    public static final DeferredHolder<EntityType<?>, EntityType<AntEntity>> ANT = register("ant", AntEntity::new, 0.1f, 0.1f);
+    public static final DeferredHolder<EntityType<?>, EntityType<ButterflyEntity>> BUTTERFLY = registerFlying("butterfly", ButterflyEntity::new, 0.2f, 0.2f);
+    public static final DeferredHolder<EntityType<?>, EntityType<MothEntity>> MOTH = registerFlying("moth", MothEntity::new, 0.2f, 0.2f);
+    public static final DeferredHolder<EntityType<?>, EntityType<FireflyEntity>> FIREFLY = registerFlying("firefly", FireflyEntity::new, 0.1f, 0.1f);
+
+    // ── SPECIAL ENTITIES ──────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<CarcassEntity>> CARCASS = BiomeRegistries.ENTITY_TYPES.register("carcass", 
+        () -> EntityType.Builder.<CarcassEntity>of(CarcassEntity::new, MobCategory.MISC).sized(1.5f, 0.5f).build("carcass"));
+
+    // Internal helpers
+    private static <T extends net.minecraft.world.entity.Entity> DeferredHolder<EntityType<?>, EntityType<T>> register(String name, EntityType.EntityFactory<T> factory, float width, float height) {
+        return BiomeRegistries.ENTITY_TYPES.register(name, () -> EntityType.Builder.of(factory, MobCategory.CREATURE).sized(width, height).build(name));
+    }
+    
+    private static <T extends net.minecraft.world.entity.Entity> DeferredHolder<EntityType<?>, EntityType<T>> registerWater(String name, EntityType.EntityFactory<T> factory, float width, float height) {
+        return BiomeRegistries.ENTITY_TYPES.register(name, () -> EntityType.Builder.of(factory, MobCategory.WATER_CREATURE).sized(width, height).build(name));
+    }
+    
+    private static <T extends net.minecraft.world.entity.Entity> DeferredHolder<EntityType<?>, EntityType<T>> registerFlying(String name, EntityType.EntityFactory<T> factory, float width, float height) {
+        return BiomeRegistries.ENTITY_TYPES.register(name, () -> EntityType.Builder.of(factory, MobCategory.AMBIENT).sized(width, height).build(name));
+    }
+}
+Total Animals registered: 40
+7. Microbiology & Disease System
+7.1 DiseaseRegistry
+File: data/DiseaseRegistry.java
+Registers exactly 18 diseases into HorizonCore's DISEASE_REGISTRY_KEY via our own DeferredRegister.
+code
+Java
+package com.horizonpack.horizonbiome.data;
+
+import com.horizonpack.horizoncore.core.HorizonRegistries;
+import com.horizonpack.horizoncore.data.DiseaseType;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+
+public class DiseaseRegistry {
+    public static final DeferredRegister<DiseaseType> DISEASES = 
+        DeferredRegister.create(HorizonRegistries.DISEASE_REGISTRY_KEY, "horizonbiome");
+
+    private static DeferredHolder<DiseaseType, DiseaseType> register(String name, float mortality, int durationTicks, boolean contagious, String vector) {
+        return DISEASES.register(name, () -> new DiseaseType(new ResourceLocation("horizonbiome", name), mortality, durationTicks, contagious, vector));
+    }
+
+    // ── DEFICIENCY DISEASES ───────────────────────────────────────────────────
+    public static final var SCURVY = register("scurvy", 0.3f, -1, false, "lack_vitamin_c");
+    public static final var RICKETS = register("rickets", 0.1f, -1, false, "lack_vitamin_d");
+    public static final var PELLAGRA = register("pellagra", 0.4f, -1, false, "lack_vitamin_b3");
+    public static final var BERIBERI = register("beriberi", 0.5f, -1, false, "lack_vitamin_b1");
+    public static final var ANEMIA = register("anemia", 0.2f, -1, false, "lack_iron");
+
+    // ── BACTERIAL & WATERBORNE ────────────────────────────────────────────────
+    public static final var DYSENTERY = register("dysentery", 0.6f, 72000, true, "dirty_water");
+    public static final var CHOLERA = register("cholera", 0.8f, 144000, true, "dirty_water");
+    public static final var TYPHOID = register("typhoid", 0.7f, 120000, true, "contaminated_food");
+
+    // ── VECTOR-BORNE & PANDEMICS ──────────────────────────────────────────────
+    public static final var MALARIA = register("malaria", 0.5f, 240000, false, "mosquito_bite");
+    public static final var PLAGUE = register("plague", 0.95f, 168000, true, "flea_bite");
+    public static final var SMALLPOX = register("smallpox", 0.85f, 240000, true, "airborne");
+    public static final var TUBERCULOSIS = register("tuberculosis", 0.6f, -1, true, "airborne");
+    public static final var INFLUENZA = register("influenza", 0.3f, 96000, true, "airborne");
+
+    // ── INJURIES & ENVIRONMENTAL ──────────────────────────────────────────────
+    public static final var FOOD_POISONING = register("food_poisoning", 0.2f, 24000, false, "spoiled_food");
+    public static final var INFECTED_WOUND = register("infected_wound", 0.4f, 72000, false, "untreated_damage");
+    public static final var HEAT_STROKE = register("heat_stroke", 0.7f, 6000, false, "extreme_heat");
+    public static final var HYPOTHERMIA = register("hypothermia", 0.7f, 6000, false, "extreme_cold");
+    
+    // ── LATE GAME / MODERN ────────────────────────────────────────────────────
+    public static final var RADIATION_SICKNESS = register("radiation_sickness", 0.9f, 240000, false, "nuclear_exposure");
+}
+Total Diseases registered: 18
+7.2 DiseaseEngine
+File: systems/DiseaseEngine.java
+Handles disease transmission, symptoms, and cures.
+code
+Java
+package com.horizonpack.horizonbiome.systems;
+
+import com.horizonpack.horizonbiome.data.DiseaseRegistry;
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+
+public class DiseaseEngine {
+
+    public static void init() {}
+
+    public static void tickPlayerHealth(ServerPlayer player) {
+        IHorizonPlayerData data = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+        if (data == null) return;
+
+        checkDeficiencies(player, data);
+        applySymptoms(player, data);
+    }
+
+    private static void checkDeficiencies(ServerPlayer player, IHorizonPlayerData data) {
+        // Vitamin C -> Scurvy
+        if (data.getVitamin(com.horizonpack.horizoncore.data.VitaminType.C) < 5.0f) {
+            infect(player, "scurvy");
+        }
+        // Iron -> Anemia
+        if (data.getMineral(com.horizonpack.horizoncore.data.MineralType.IRON) < 10.0f) {
+            infect(player, "anemia");
+        }
+        // Apply similarly for Rickets (D), Pellagra (B3), Beriberi (B1)
+    }
+
+    private static void applySymptoms(ServerPlayer player, IHorizonPlayerData data) {
+        // Pseudo-logic mapping capability active diseases to effects
+        if (hasDisease(data, "scurvy")) {
+            player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 200, 0, false, false));
+            player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 200, 0, false, false));
+        }
+        if (hasDisease(data, "cholera")) {
+            player.addEffect(new MobEffectInstance(MobEffects.POISON, 100, 1, false, false));
+            player.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 200, 0, false, false));
+            data.setHydration(Math.max(0, data.getHydration() - 1.0f)); // Dehydration
+        }
+        // ... (applies to all 18 diseases)
+    }
+
+    public static void infect(ServerPlayer player, String diseaseId) {
+        // Implementation to write disease to player NBT tracking map via capabilities
+    }
+    
+    private static boolean hasDisease(IHorizonPlayerData data, String id) {
+        // Queries capability active diseases map
+        return false; 
+    }
+}
+8. Animal AI & Domestication
+8.1 Custom AI Goals
+File: ai/PredatorHuntGoal.java
+code
+Java
+package com.horizonpack.horizonbiome.ai;
+
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.phys.AABB;
+
+import java.util.List;
+
+public class PredatorHuntGoal extends Goal {
+    private final Mob predator;
+    private final double speedModifier;
+    private LivingEntity target;
+
+    public PredatorHuntGoal(Mob predator, double speedModifier) {
+        this.predator = predator;
+        this.speedModifier = speedModifier;
+    }
+
+    @Override
+    public boolean canUse() {
+        if (predator.getRandom().nextInt(100) != 0) return false;
+        
+        AABB searchArea = predator.getBoundingBox().inflate(16.0D);
+        List<LivingEntity> prey = predator.level().getEntitiesOfClass(LivingEntity.class, searchArea, 
+            e -> e.getType().is(com.horizonpack.horizonbiome.core.BiomeRegistries.PREY_TAG));
+            
+        if (!prey.isEmpty()) {
+            this.target = prey.get(predator.getRandom().nextInt(prey.size()));
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void start() {
+        predator.getNavigation().moveTo(target, speedModifier);
+        predator.setTarget(target);
+    }
+}
+8.2 Entity Implementation Example (Wolf)
+code
+Java
+package com.horizonpack.horizonbiome.entities.carnivores;
+
+import com.horizonpack.horizonbiome.ai.PredatorHuntGoal;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.animal.Wolf;
+import net.minecraft.world.level.Level;
+
+public class WolfEntity extends Wolf {
+    public WolfEntity(EntityType<? extends Wolf> type, Level level) {
+        super(type, level);
+    }
+
+    @Override
+    protected void registerGoals() {
+        super.registerGoals();
+        this.goalSelector.addGoal(3, new PredatorHuntGoal(this, 1.2D));
+    }
+
+    public static AttributeSupplier.Builder createAttributes() {
+        return Wolf.createAttributes()
+            .add(Attributes.MAX_HEALTH, 15.0D)
+            .add(Attributes.MOVEMENT_SPEED, 0.35D)
+            .add(Attributes.ATTACK_DAMAGE, 4.0D);
+    }
+}
+(All 40 animals follow this pattern, extending either Animal, WaterAnimal, or FlyingAnimal, with custom attributes and AI goals.)
+9. Carcass & Decomposition System
+When an animal is killed, instead of dropping raw meat immediately, it spawns a CarcassEntity. Players must use a knife or appropriate tool to harvest it, or leave it to decompose.
+File: entities/CarcassEntity.java
+code
+Java
+package com.horizonpack.horizonbiome.entities;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.Level;
+
+public class CarcassEntity extends Entity {
+    
+    // 0 = Fresh, 1 = Decomposing, 2 = Rotten, 3 = Skeleton
+    private static final EntityDataAccessor<Integer> DECOMP_STAGE = 
+        SynchedEntityData.defineId(CarcassEntity.class, EntityDataSerializers.INT);
+        
+    private int ageTicks = 0;
+    public String sourceAnimalId = "";
+
+    public CarcassEntity(EntityType<?> type, Level level) {
+        super(type, level);
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        builder.define(DECOMP_STAGE, 0);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (!level().isClientSide) {
+            ageTicks++;
+            // Stage advances every 48000 ticks (2 in-game days)
+            int stage = Math.min(3, ageTicks / 48000);
+            if (stage != this.entityData.get(DECOMP_STAGE)) {
+                this.entityData.set(DECOMP_STAGE, stage);
+            }
+            
+            // Attract scavengers if rotting
+            if (stage >= 1 && ageTicks % 200 == 0) {
+                com.horizonpack.horizonbiome.systems.DecompositionEngine.attractScavengers(this);
+            }
+            
+            // Generate disease miasma if rotten
+            if (stage == 2 && ageTicks % 100 == 0) {
+                com.horizonpack.horizonbiome.systems.DecompositionEngine.emitDisease(this);
+            }
+        }
+    }
+
+    @Override
+    protected void readAdditionalSaveData(CompoundTag tag) {
+        ageTicks = tag.getInt("AgeTicks");
+        sourceAnimalId = tag.getString("SourceAnimal");
+        this.entityData.set(DECOMP_STAGE, tag.getInt("Stage"));
+    }
+
+    @Override
+    protected void addAdditionalSaveData(CompoundTag tag) {
+        tag.putInt("AgeTicks", ageTicks);
+        tag.putString("SourceAnimal", sourceAnimalId);
+        tag.putInt("Stage", this.entityData.get(DECOMP_STAGE));
+    }
+}
+10. Biome Generation Integration
+14.1 Biome Modifier for Animal Spawns
+HorizonBiome utilizes NeoForge's biome modifier system to dynamically add its 40 animals to the correct horizonworld climate zones without hard-replacing vanilla biomes.
+File: data/horizonbiome/neoforge/biome_modifier/spawn_deer.json
+code
+JSON
+{
+  "type": "neoforge:add_spawns",
+  "biomes": "#horizonworld:climate_temperate",
+  "spawners": {
+    "type": "horizonbiome:deer",
+    "weight": 50,
+    "minCount": 2,
+    "maxCount": 6
+  }
+}
+14.2 Configured Feature for Wild Plants
+File: data/horizonbiome/worldgen/configured_feature/wild_chamomile.json
+code
+JSON
+{
+  "type": "minecraft:flower",
+  "config": {
+    "tries": 32,
+    "xz_spread": 6,
+    "y_spread": 2,
+    "feature": {
+      "feature": "minecraft:simple_block",
+      "config": {
+        "to_place": {
+          "type": "minecraft:simple_state_provider",
+          "state": {
+            "Name": "horizonbiome:chamomile"
+          }
+        }
+      }
+    }
+  }
+}
+14.3 Placed Feature for Wild Plants
+File: data/horizonbiome/worldgen/placed_feature/wild_chamomile_placed.json
+code
+JSON
+{
+  "feature": "horizonbiome:wild_chamomile",
+  "placement": [
+    {
+      "type": "minecraft:noise_threshold_count",
+      "noise_level": -0.8,
+      "below_noise": 0,
+      "above_noise": 2
+    },
+    {
+      "type": "minecraft:in_square"
+    },
+    {
+      "type": "minecraft:heightmap",
+      "heightmap": "MOTION_BLOCKING"
+    },
+    {
+      "type": "minecraft:biome"
+    }
+  ]
+}
+11. Event Hooks
+File: events/BiomeEventHandlers.java
+code
+Java
+package com.horizonpack.horizonbiome.events;
+
+import com.horizonpack.horizonbiome.core.HorizonBiome;
+import com.horizonpack.horizonbiome.entities.CarcassEntity;
+import com.horizonpack.horizonbiome.systems.DiseaseEngine;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.animal.Animal;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonBiome.MODID)
+public class BiomeEventHandlers {
+
+    @SubscribeEvent
+    public static void onAnimalDeath(LivingDeathEvent event) {
+        LivingEntity entity = event.getEntity();
+        if (!entity.level().isClientSide && entity instanceof Animal) {
+            // Cancel default drops, spawn carcass instead
+            CarcassEntity carcass = new CarcassEntity(com.horizonpack.horizonbiome.core.BiomeRegistries.CARCASS.get(), entity.level());
+            carcass.setPos(entity.getX(), entity.getY(), entity.getZ());
+            carcass.sourceAnimalId = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
+            entity.level().addFreshEntity(carcass);
+            // We let the event proceed to kill the entity, but intercept loot logic elsewhere
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        if (!event.getEntity().level().isClientSide && event.getEntity().tickCount % 100 == 0) {
+            DiseaseEngine.tickPlayerHealth((ServerPlayer) event.getEntity());
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onPlayerInteractEntity(PlayerInteractEvent.EntityInteract event) {
+        if (event.getTarget() instanceof CarcassEntity carcass && !event.getLevel().isClientSide) {
+            if (event.getItemStack().is(com.horizonpack.horizonbiome.core.BiomeRegistries.KNIVES_TAG)) {
+                // Handle carving
+                event.getLevel().addFreshEntity(new ItemEntity(event.getLevel(), carcass.getX(), carcass.getY(), carcass.getZ(), 
+                    new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.BEEF, 4)));
+                carcass.discard();
+            }
+        }
+    }
+}
+12. Network Packets
+File: network/packets/SyncDiseasePacket.java
+code
+Java
+package com.horizonpack.horizonbiome.network.packets;
+
+import com.horizonpack.horizonbiome.core.HorizonBiome;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.List;
+
+public record SyncDiseasePacket(List<String> activeDiseases) implements CustomPacketPayload {
+
+    public static final Type<SyncDiseasePacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonBiome.MODID, "sync_diseases"));
+
+    public static final StreamCodec<ByteBuf, SyncDiseasePacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.STRING_UTF8.apply(ByteBufCodecs.list()), SyncDiseasePacket::activeDiseases,
+        SyncDiseasePacket::new
+    );
+
+    @Override
+    public Type<SyncDiseasePacket> type() { return TYPE; }
+
+    public static void handleClient(SyncDiseasePacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            // Update client-side GUI state
+            com.horizonpack.horizonbiome.client.gui.DiseaseHudOverlay.setActiveDiseases(packet.activeDiseases());
+        });
+    }
+}
+13. Configuration
+File: core/BiomeConfig.java
+code
+Java
+package com.horizonpack.horizonbiome.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class BiomeConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+    
+    public static class Common {
+        public final ModConfigSpec.DoubleValue diseaseInfectionRate;
+        public final ModConfigSpec.BooleanValue carcassDecomposition;
+        public final ModConfigSpec.IntValue carcassRotTicks;
+        public final ModConfigSpec.BooleanValue cropSeasonsStrict;
+        
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("microbiology");
+            diseaseInfectionRate = builder.comment("Multiplier for infection chances").defineInRange("infectionRate", 1.0, 0.0, 5.0);
+            builder.pop();
+            
+            builder.push("fauna");
+            carcassDecomposition = builder.comment("Enable complex carcass rotting").define("carcassDecomposition", true);
+            carcassRotTicks = builder.comment("Ticks until carcass rots completely").defineInRange("carcassRotTicks", 96000, 24000, 240000);
+            builder.pop();
+            
+            builder.push("flora");
+            cropSeasonsStrict = builder.comment("Crops die if planted in wrong season").define("cropSeasonsStrict", true);
+            builder.pop();
+        }
+    }
+    
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showDiseaseHUD;
+        
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showDiseaseHUD = builder.comment("Show active diseases on HUD").define("showDiseaseHUD", true);
+            builder.pop();
+        }
+    }
+    
+    public static final Common COMMON;
+    public static final Client CLIENT;
+    
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+        
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+14. Data Pack Integration
+(See section 10 and below for full examples of data generation items)
+15. Blockstate & Model JSONs
+15.1 Soil Block (Loamy Soil)
+File: assets/horizonbiome/blockstates/loamy_soil.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonbiome:block/loamy_soil" }
+  }
+}
+File: assets/horizonbiome/models/block/loamy_soil.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "horizonbiome:block/loamy_soil"
+  }
+}
+15.2 Wild Plant (Chamomile)
+File: assets/horizonbiome/blockstates/chamomile.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonbiome:block/chamomile" }
+  }
+}
+File: assets/horizonbiome/models/block/chamomile.json
+code
+JSON
+{
+  "parent": "minecraft:block/cross",
+  "textures": {
+    "cross": "horizonbiome:block/chamomile"
+  }
+}
+15.3 Crop Block (Wheat Crop - Age 0-7)
+File: assets/horizonbiome/blockstates/wheat_crop.json
+code
+JSON
+{
+  "variants": {
+    "age=0": { "model": "horizonbiome:block/wheat_stage0" },
+    "age=1": { "model": "horizonbiome:block/wheat_stage1" },
+    "age=2": { "model": "horizonbiome:block/wheat_stage2" },
+    "age=3": { "model": "horizonbiome:block/wheat_stage3" },
+    "age=4": { "model": "horizonbiome:block/wheat_stage4" },
+    "age=5": { "model": "horizonbiome:block/wheat_stage5" },
+    "age=6": { "model": "horizonbiome:block/wheat_stage6" },
+    "age=7": { "model": "horizonbiome:block/wheat_stage7" }
+  }
+}
+File: assets/horizonbiome/models/block/wheat_stage7.json
+code
+JSON
+{
+  "parent": "minecraft:block/crop",
+  "textures": {
+    "crop": "horizonbiome:block/wheat_stage7"
+  }
+}
+16. Recipe JSONs
+16.1 Crafting: Medicinal Tea (Cures Hypothermia/Fever)
+File: data/horizonbiome/recipes/chamomile_tea.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    {
+      "item": "horizonbiome:chamomile"
+    },
+    {
+      "item": "minecraft:glass_bottle"
+    },
+    {
+      "item": "minecraft:sugar"
+    }
+  ],
+  "result": {
+    "id": "horizonbiome:chamomile_tea",
+    "count": 1
+  }
+}
+16.2 Campfire Cooking: Roasted Venison
+File: data/horizonbiome/recipes/roasted_venison.json
+code
+JSON
+{
+  "type": "minecraft:campfire_cooking",
+  "ingredient": {
+    "item": "horizonbiome:raw_venison"
+  },
+  "result": {
+    "id": "horizonbiome:cooked_venison",
+    "count": 1
+  },
+  "experience": 0.35,
+  "cookingtime": 600
+}
+17. Loot Table JSONs
+17.1 Entity Drop: Deer
+File: data/horizonbiome/loot_tables/entities/deer.json
+code
+JSON
+{
+  "type": "minecraft:entity",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonbiome:raw_venison",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": {
+                "type": "minecraft:uniform",
+                "min": 1.0,
+                "max": 3.0
+              }
+            },
+            {
+              "function": "minecraft:looting_enchant",
+              "count": {
+                "type": "minecraft:uniform",
+                "min": 0.0,
+                "max": 1.0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "minecraft:leather",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": {
+                "type": "minecraft:uniform",
+                "min": 0.0,
+                "max": 2.0
+              }
+            },
+            {
+              "function": "minecraft:looting_enchant",
+              "count": {
+                "type": "minecraft:uniform",
+                "min": 0.0,
+                "max": 1.0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+17.2 Crop Drop: Tomato Crop
+File: data/horizonbiome/loot_tables/blocks/tomato_crop.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "functions": [
+    {
+      "function": "minecraft:explosion_decay"
+    }
+  ],
+  "pools": [
+    {
+      "rolls": 1.0,
+      "entries": [
+        {
+          "type": "minecraft:alternatives",
+          "children": [
+            {
+              "type": "minecraft:item",
+              "conditions": [
+                {
+                  "condition": "minecraft:block_state_property",
+                  "block": "horizonbiome:tomato_crop",
+                  "properties": {
+                    "age": "7"
+                  }
+                }
+              ],
+              "name": "horizonbiome:tomato"
+            },
+            {
+              "type": "minecraft:item",
+              "name": "horizonbiome:tomato_seeds"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rolls": 1.0,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "conditions": [
+            {
+              "condition": "minecraft:block_state_property",
+              "block": "horizonbiome:tomato_crop",
+              "properties": {
+                "age": "7"
+              }
+            }
+          ],
+          "functions": [
+            {
+              "function": "minecraft:apply_bonus",
+              "enchantment": "minecraft:fortune",
+              "formula": "minecraft:binomial_with_bonus_count",
+              "parameters": {
+                "extra": 3,
+                "probability": 0.5714286
+              }
+            }
+          ],
+          "name": "horizonbiome:tomato_seeds"
+        }
+      ]
+    }
+  ]
+}
+18. Tag JSONs
+18.1 Block Tag: Dirt/Soil (Vanilla Extension)
+File: data/minecraft/tags/blocks/dirt.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonbiome:clay_soil",
+    "horizonbiome:sandy_soil",
+    "horizonbiome:loamy_soil",
+    "horizonbiome:silty_soil",
+    "horizonbiome:peaty_soil",
+    "horizonbiome:chalky_soil",
+    "horizonbiome:saline_soil",
+    "horizonbiome:volcanic_ash_soil",
+    "horizonbiome:permafrost_soil",
+    "horizonbiome:laterite_soil"
+  ]
+}
+18.2 Entity Tag: Prey Animals
+File: data/horizonbiome/tags/entity_types/prey.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonbiome:deer",
+    "horizonbiome:horse",
+    "horizonbiome:cattle",
+    "horizonbiome:sheep",
+    "horizonbiome:goat",
+    "horizonbiome:rabbit",
+    "horizonbiome:bison",
+    "horizonbiome:donkey",
+    "horizonbiome:llama",
+    "horizonbiome:pig",
+    "horizonbiome:chicken",
+    "horizonbiome:duck"
+  ]
+}
+18.3 Item Tag: Crops
+File: data/c/tags/items/crops.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonbiome:wheat",
+    "horizonbiome:rice",
+    "horizonbiome:corn",
+    "horizonbiome:barley",
+    "horizonbiome:oats",
+    "horizonbiome:millet",
+    "horizonbiome:potato",
+    "horizonbiome:carrot",
+    "horizonbiome:onion",
+    "horizonbiome:garlic",
+    "horizonbiome:tomato",
+    "horizonbiome:lettuce",
+    "horizonbiome:cabbage",
+    "horizonbiome:spinach",
+    "horizonbiome:pumpkin",
+    "horizonbiome:watermelon",
+    "horizonbiome:apple",
+    "horizonbiome:orange",
+    "horizonbiome:grape",
+    "horizonbiome:strawberry",
+    "horizonbiome:banana",
+    "horizonbiome:cocoa",
+    "horizonbiome:coffee",
+    "horizonbiome:tea",
+    "horizonbiome:sugarcane",
+    "horizonbiome:cotton",
+    "horizonbiome:flax",
+    "horizonbiome:hemp",
+    "horizonbiome:tobacco"
+  ]
+}
+19. Lang / Localization
+File: assets/horizonbiome/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonbiome.soils": "HorizonBiome - Soils",
+  "itemGroup.horizonbiome.flora": "HorizonBiome - Flora & Crops",
+  "itemGroup.horizonbiome.fauna": "HorizonBiome - Fauna Spawn Eggs",
+  "itemGroup.horizonbiome.medicine": "HorizonBiome - Medicine",
+
+  "block.horizonbiome.clay_soil": "Clay Soil",
+  "block.horizonbiome.sandy_soil": "Sandy Soil",
+  "block.horizonbiome.loamy_soil": "Loamy Soil",
+  "block.horizonbiome.silty_soil": "Silty Soil",
+  "block.horizonbiome.peaty_soil": "Peaty Soil",
+  "block.horizonbiome.chalky_soil": "Chalky Soil",
+  "block.horizonbiome.saline_soil": "Saline Soil",
+  "block.horizonbiome.volcanic_ash_soil": "Volcanic Ash Soil",
+  "block.horizonbiome.permafrost_soil": "Permafrost Soil",
+  "block.horizonbiome.laterite_soil": "Laterite Soil",
+
+  "block.horizonbiome.fern": "Fern",
+  "block.horizonbiome.nettle": "Nettle",
+  "block.horizonbiome.clover": "Clover",
+  "block.horizonbiome.thistle": "Thistle",
+  "block.horizonbiome.foxglove": "Foxglove",
+  "block.horizonbiome.nightshade": "Nightshade",
+  "block.horizonbiome.chamomile": "Chamomile",
+  "block.horizonbiome.lavender": "Lavender",
+  "block.horizonbiome.sage": "Sage",
+  "block.horizonbiome.mint": "Mint",
+  "block.horizonbiome.dandelion": "Dandelion",
+  "block.horizonbiome.mushroom_red": "Red Mushroom",
+  "block.horizonbiome.mushroom_brown": "Brown Mushroom",
+  "block.horizonbiome.cattail": "Cattail",
+  "block.horizonbiome.reed": "Reed",
+
+  "block.horizonbiome.wheat_crop": "Wheat Crop",
+  "block.horizonbiome.rice_crop": "Rice Crop",
+  "block.horizonbiome.corn_crop": "Corn Crop",
+  "block.horizonbiome.barley_crop": "Barley Crop",
+  "block.horizonbiome.oats_crop": "Oats Crop",
+  "block.horizonbiome.millet_crop": "Millet Crop",
+  "block.horizonbiome.potato_crop": "Potato Crop",
+  "block.horizonbiome.carrot_crop": "Carrot Crop",
+  "block.horizonbiome.onion_crop": "Onion Crop",
+  "block.horizonbiome.garlic_crop": "Garlic Crop",
+  "block.horizonbiome.tomato_crop": "Tomato Crop",
+  "block.horizonbiome.lettuce_crop": "Lettuce Crop",
+  "block.horizonbiome.cabbage_crop": "Cabbage Crop",
+  "block.horizonbiome.spinach_crop": "Spinach Crop",
+  "block.horizonbiome.pumpkin_crop": "Pumpkin Crop",
+  "block.horizonbiome.watermelon_crop": "Watermelon Crop",
+  "block.horizonbiome.apple_crop": "Apple Crop",
+  "block.horizonbiome.orange_crop": "Orange Crop",
+  "block.horizonbiome.grape_crop": "Grape Crop",
+  "block.horizonbiome.strawberry_crop": "Strawberry Crop",
+  "block.horizonbiome.banana_crop": "Banana Crop",
+  "block.horizonbiome.cocoa_crop": "Cocoa Crop",
+  "block.horizonbiome.coffee_crop": "Coffee Crop",
+  "block.horizonbiome.tea_crop": "Tea Crop",
+  "block.horizonbiome.sugarcane_crop": "Sugarcane Crop",
+  "block.horizonbiome.cotton_crop": "Cotton Crop",
+  "block.horizonbiome.flax_crop": "Flax Crop",
+  "block.horizonbiome.hemp_crop": "Hemp Crop",
+  "block.horizonbiome.tobacco_crop": "Tobacco Crop",
+
+  "block.horizonbiome.apple_tree": "Apple Tree",
+  "block.horizonbiome.orange_tree": "Orange Tree",
+  "block.horizonbiome.lemon_tree": "Lemon Tree",
+  "block.horizonbiome.cherry_tree": "Cherry Tree",
+  "block.horizonbiome.olive_tree": "Olive Tree",
+  "block.horizonbiome.coconut_palm": "Coconut Palm",
+
+  "item.horizonbiome.wheat": "Wheat",
+  "item.horizonbiome.rice": "Rice",
+  "item.horizonbiome.corn": "Corn",
+  "item.horizonbiome.barley": "Barley",
+  "item.horizonbiome.oats": "Oats",
+  "item.horizonbiome.millet": "Millet",
+  "item.horizonbiome.potato": "Potato",
+  "item.horizonbiome.carrot": "Carrot",
+  "item.horizonbiome.onion": "Onion",
+  "item.horizonbiome.garlic": "Garlic",
+  "item.horizonbiome.tomato": "Tomato",
+  "item.horizonbiome.lettuce": "Lettuce",
+  "item.horizonbiome.cabbage": "Cabbage",
+  "item.horizonbiome.spinach": "Spinach",
+  "item.horizonbiome.pumpkin": "Pumpkin",
+  "item.horizonbiome.watermelon": "Watermelon",
+  "item.horizonbiome.apple": "Apple",
+  "item.horizonbiome.orange": "Orange",
+  "item.horizonbiome.grape": "Grape",
+  "item.horizonbiome.strawberry": "Strawberry",
+  "item.horizonbiome.banana": "Banana",
+  "item.horizonbiome.cocoa": "Cocoa",
+  "item.horizonbiome.coffee": "Coffee",
+  "item.horizonbiome.tea": "Tea Leaves",
+  "item.horizonbiome.sugarcane": "Sugarcane",
+  "item.horizonbiome.cotton": "Cotton Boll",
+  "item.horizonbiome.flax": "Flax",
+  "item.horizonbiome.hemp": "Hemp Fibers",
+  "item.horizonbiome.tobacco": "Tobacco Leaves",
+
+  "item.horizonbiome.wheat_seeds": "Wheat Seeds",
+  "item.horizonbiome.rice_seeds": "Rice Seeds",
+  "item.horizonbiome.corn_seeds": "Corn Kernels",
+  "item.horizonbiome.barley_seeds": "Barley Seeds",
+  "item.horizonbiome.oats_seeds": "Oat Seeds",
+  "item.horizonbiome.millet_seeds": "Millet Seeds",
+  "item.horizonbiome.tomato_seeds": "Tomato Seeds",
+  "item.horizonbiome.lettuce_seeds": "Lettuce Seeds",
+  "item.horizonbiome.cabbage_seeds": "Cabbage Seeds",
+  "item.horizonbiome.spinach_seeds": "Spinach Seeds",
+  "item.horizonbiome.grape_seeds": "Grape Seeds",
+  "item.horizonbiome.strawberry_seeds": "Strawberry Seeds",
+  "item.horizonbiome.cotton_seeds": "Cotton Seeds",
+  "item.horizonbiome.flax_seeds": "Flax Seeds",
+  "item.horizonbiome.hemp_seeds": "Hemp Seeds",
+  "item.horizonbiome.tobacco_seeds": "Tobacco Seeds",
+
+  "item.horizonbiome.raw_venison": "Raw Venison",
+  "item.horizonbiome.cooked_venison": "Cooked Venison",
+  "item.horizonbiome.chamomile_tea": "Chamomile Tea",
+
+  "entity.horizonbiome.deer": "Deer",
+  "entity.horizonbiome.horse": "Horse",
+  "entity.horizonbiome.cattle": "Cattle",
+  "entity.horizonbiome.sheep": "Sheep",
+  "entity.horizonbiome.goat": "Goat",
+  "entity.horizonbiome.elephant": "Elephant",
+  "entity.horizonbiome.rabbit": "Rabbit",
+  "entity.horizonbiome.bison": "Bison",
+  "entity.horizonbiome.camel": "Camel",
+  "entity.horizonbiome.donkey": "Donkey",
+  "entity.horizonbiome.llama": "Llama",
+  "entity.horizonbiome.oxen": "Oxen",
+  "entity.horizonbiome.wolf": "Wolf",
+  "entity.horizonbiome.bear": "Bear",
+  "entity.horizonbiome.lion": "Lion",
+  "entity.horizonbiome.tiger": "Tiger",
+  "entity.horizonbiome.crocodile": "Crocodile",
+  "entity.horizonbiome.shark": "Shark",
+  "entity.horizonbiome.eagle": "Eagle",
+  "entity.horizonbiome.hyena": "Hyena",
+  "entity.horizonbiome.vulture": "Vulture",
+  "entity.horizonbiome.pig": "Pig",
+  "entity.horizonbiome.chicken": "Chicken",
+  "entity.horizonbiome.duck": "Duck",
+  "entity.horizonbiome.boar": "Wild Boar",
+  "entity.horizonbiome.crow": "Crow",
+  "entity.horizonbiome.salmon": "Salmon",
+  "entity.horizonbiome.tuna": "Tuna",
+  "entity.horizonbiome.cod": "Cod",
+  "entity.horizonbiome.dolphin": "Dolphin",
+  "entity.horizonbiome.whale": "Whale",
+  "entity.horizonbiome.giant_squid": "Giant Squid",
+  "entity.horizonbiome.crab": "Crab",
+  "entity.horizonbiome.jellyfish": "Jellyfish",
+  "entity.horizonbiome.sea_turtle": "Sea Turtle",
+  "entity.horizonbiome.bee": "Bee",
+  "entity.horizonbiome.ant": "Ant",
+  "entity.horizonbiome.butterfly": "Butterfly",
+  "entity.horizonbiome.moth": "Moth",
+  "entity.horizonbiome.firefly": "Firefly",
+  "entity.horizonbiome.carcass": "Animal Carcass",
+
+  "disease.horizonbiome.scurvy": "Scurvy",
+  "disease.horizonbiome.rickets": "Rickets",
+  "disease.horizonbiome.pellagra": "Pellagra",
+  "disease.horizonbiome.beriberi": "Beriberi",
+  "disease.horizonbiome.anemia": "Anemia",
+  "disease.horizonbiome.dysentery": "Dysentery",
+  "disease.horizonbiome.cholera": "Cholera",
+  "disease.horizonbiome.typhoid": "Typhoid",
+  "disease.horizonbiome.malaria": "Malaria",
+  "disease.horizonbiome.plague": "Plague",
+  "disease.horizonbiome.smallpox": "Smallpox",
+  "disease.horizonbiome.tuberculosis": "Tuberculosis",
+  "disease.horizonbiome.influenza": "Influenza",
+  "disease.horizonbiome.food_poisoning": "Food Poisoning",
+  "disease.horizonbiome.infected_wound": "Infected Wound",
+  "disease.horizonbiome.heat_stroke": "Heat Stroke",
+  "disease.horizonbiome.hypothermia": "Hypothermia",
+  "disease.horizonbiome.radiation_sickness": "Radiation Sickness",
+
+  "gui.horizonbiome.disease.active": "Active Afflictions:",
+  "gui.horizonbiome.soil.nutrients": "N: %d%% P: %d%% K: %d%%",
+  
+  "advancements.horizonbiome.root.title": "Circle of Life",
+  "advancements.horizonbiome.root.desc": "Survive the unforgiving wilderness.",
+  "advancements.horizonbiome.agriculture.title": "Agricultural Revolution",
+  "advancements.horizonbiome.agriculture.desc": "Plant your first seed.",
+  "advancements.horizonbiome.domestication.title": "Man's Best Friend",
+  "advancements.horizonbiome.domestication.desc": "Tame a wild animal.",
+  "advancements.horizonbiome.cure.title": "Miracle Worker",
+  "advancements.horizonbiome.cure.desc": "Recover from a deadly disease."
+}
+20. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonbiome'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+minecraft {
+    accessTransformers {
+        file('src/main/resources/META-INF/accesstransformer.cfg')
+    }
+}
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonbiome', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    // Required Horizon Corebreach dependencies
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonworld:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+21. neoforge.mods.toml
+File: src/main/resources/META-INF/neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonbiome"
+    version = "1.0.0"
+    displayName = "Horizon Biome"
+    description = """
+The biological and ecological simulation layer for the Horizon Corebreach modpack. 
+Implements 10 soil types, 50 plant species, 40 animal species with complex AI, 
+animal decomposition, and an 18-disease infection system mapping to climate and nutrition.
+"""
+    logoFile = "horizonbiome.png"
+
+[[dependencies.horizonbiome]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonbiome]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonbiome]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonbiome]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonbiome]]
+    modId = "horizonworld"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+22. Critical Implementation Notes
+Crop Seasonality & Growth Constraints:
+Crops must evaluate horizonworld's SeasonData.getCurrentSeason() during randomTick. If a crop's favored growing season does not match the current season (e.g., trying to grow Tomatoes in WINTER), the crop halts growth. If cropSeasonsStrict is true in the config, the crop block state will transition directly to a dead/wilted state after 3 out-of-season ticks.
+Soil Nutrient Depletion System:
+HorizonCropBlock reads SoilNutrientData from the block directly beneath it. Upon successfully reaching maturity (age=7), the soil block's internal NBT (if a BlockEntity is used, or a variant block state if not) drops its N/P/K values. This enforces crop rotation or the application of fertilizers.
+Disease Capability Persistence:
+Active diseases must be serialized into the player's IHorizonPlayerData capability mapped under the "Diseases" compound tag. Do not use volatile variables. When the player dies, deficiency-based diseases clear, but contagious diseases persist across respawns if resetNutritionOnDeath is disabled in horizoncore's configuration.
+Carcass Entity Network Sync & Performance:
+The CarcassEntity does not have standard AI goals and does not move. Its DECOMP_STAGE is tracked via EntityDataAccessor to ensure all tracking clients immediately render the correct texture (Fresh -> Skeleton) without requiring custom packets. To preserve server tick rates after mass hunting, carcasses outside a 128-block radius of any player have their ticking paused until loaded again.
+Predator/Prey AI Efficiency:
+The PredatorHuntGoal uses getEntitiesOfClass combined with a tag check (BiomeRegistries.PREY_TAG). Doing this check every tick is incredibly expensive. Ensure canUse() has a built-in tick accumulator or random chance (if (predator.getRandom().nextInt(100) != 0) return false;) to stagger the AABB intersection checks across the server tick schedule.
+Animal Breeding & Genetics NBT:
+Animals bred by the player store inherited trait modifiers (Health, Speed, Attack) in their CompoundTag during addAdditionalSaveData. When a baby spawns, the BreedingHelper must average the parents' attributes, apply a slight Gaussian mutation, and push those values into the child's AttributeInstance to simulate realistic domestication over multiple generations.
+Biome Modifier Spawning Safety:
+When adding animals to biomes via the neoforge:add_spawns biome modifier, ensure you map them to the climate tags injected by horizonworld (e.g., #horizonworld:climate_tropical) rather than vanilla identifiers. This prevents spawns from breaking if horizonworld radically shifts the base terrain layout away from vanilla logic.
+Climate Snapshot Caching for Flora/Fauna:
+Do not call ClimateEngine.getSnapshot() from every crop's randomTick or every animal's tick method simultaneously. Animals must cache their current environmental temperature/humidity and only refresh it when traversing chunk boundaries, reducing overhead on horizonworld's cache map during dense entity moments.
+

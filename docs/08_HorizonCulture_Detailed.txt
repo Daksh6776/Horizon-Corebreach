@@ -1,0 +1,1156 @@
+HorizonCulture — Detailed Technical Specification
+Mod ID: horizonculture
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Faith, Linguistics, Arts, Music, and Literature
+Absorbed mods: HorizonReligion, HorizonLinguistics, HorizonLiterature, HorizonMusic, HorizonArt
+Depends on: horizoncore, horizondata, horizonsociety
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Religion System & Registry
+Musical Instruments Registry
+Art Forms Registry
+Written Works Registry
+Language System & Registry
+Faith & Cultural Influence Engine
+World SavedData (Cultural State)
+Block & Item Registration
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonCulture implements the non-material evolution of civilization, transforming mere survival into a living society. It governs the flow of ideas, art, faith, and communication.
+Religion: Tracks faith points, divine favor, schisms, and holy wars. Drives NPC civilization happiness and geopolitical friction.
+Linguistics: A dynamic language simulation. Chat and written texts are obfuscated based on a player’s exact proficiency (0.0 to 1.0) in the specific language family.
+Literature & Writing: Physical transmission of knowledge. Books evolve from clay tablets to mass-produced newspapers, acting as tech-boosters and propaganda tools.
+Music & Art: Usable instruments that grant localized buffs, and craftable art pieces that boost settlement prestige.
+2. File & Package Structure
+code
+Text
+horizon_culture/
+├── src/main/java/com/horizonpack/horizonculture/
+│   ├── core/
+│   │   ├── HorizonCulture.java
+│   │   ├── CultureRegistries.java
+│   │   └── CultureConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── ReligionType.java
+│   │   │   ├── ArtForm.java
+│   │   │   ├── LanguageVariant.java
+│   │   │   └── WrittenWorkType.java
+│   │   └── CultureSavedData.java
+│   ├── systems/
+│   │   ├── CultureEngine.java
+│   │   ├── LinguisticsEngine.java
+│   │   └── FaithEngine.java
+│   ├── blocks/
+│   │   ├── PrintingPressBlock.java
+│   │   ├── PhonographBlock.java
+│   │   ├── SculptingStationBlock.java
+│   │   └── ArtCanvasBlock.java
+│   ├── blockentities/
+│   │   ├── PrintingPressBlockEntity.java
+│   │   ├── PhonographBlockEntity.java
+│   │   └── ArtCanvasBlockEntity.java
+│   ├── items/
+│   │   ├── InstrumentItem.java
+│   │   ├── WrittenWorkItem.java
+│   │   └── ArtPieceItem.java
+│   ├── events/
+│   │   ├── CultureEventHandlers.java
+│   │   └── custom/
+│   │       ├── LanguageLearnEvent.java
+│   │       ├── ReligiousSchismEvent.java
+│   │       └── MasterpieceCreatedEvent.java
+│   ├── network/
+│   │   ├── CulturePacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncLanguageProficiencyPacket.java
+│   │       └── PlayInstrumentPacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── PrintingPressScreen.java
+│   │   │   └── RosettaStoneScreen.java
+│   │   └── render/
+│   │       └── ArtCanvasRenderer.java
+│   └── utils/
+│       ├── ObfuscationMath.java
+│       └── MidiPlaybackHelper.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonculture/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   ├── sounds/
+│   │   └── lang/en_us.json
+│   └── data/horizonculture/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonCulture.java
+code
+Java
+package com.horizonpack.horizonculture.core;
+
+import com.horizonpack.horizonculture.events.CultureEventHandlers;
+import com.horizonpack.horizonculture.network.CulturePacketHandler;
+import com.horizonpack.horizonculture.systems.CultureEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonCulture.MODID)
+public class HorizonCulture {
+    public static final String MODID = "horizonculture";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonCulture(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, CultureConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, CultureConfig.CLIENT_SPEC);
+
+        CultureRegistries.BLOCKS.register(modEventBus);
+        CultureRegistries.ITEMS.register(modEventBus);
+        CultureRegistries.BLOCK_ENTITIES.register(modEventBus);
+        CultureRegistries.MENU_TYPES.register(modEventBus);
+        CultureRegistries.SOUND_EVENTS.register(modEventBus);
+
+        CultureRegistries.RELIGION_TYPES.register(modEventBus);
+        CultureRegistries.ART_FORMS.register(modEventBus);
+        CultureRegistries.WRITTEN_WORK_TYPES.register(modEventBus);
+        CultureRegistries.LANGUAGE_VARIANTS.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(CultureRegistries::registerNewRegistries);
+        modEventBus.addListener(CulturePacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(CultureEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            CultureEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/CultureRegistries.java
+code
+Java
+package com.horizonpack.horizonculture.core;
+
+import com.horizonpack.horizonculture.data.registry.*;
+import com.horizonpack.horizonculture.blocks.*;
+import com.horizonpack.horizonculture.blockentities.*;
+import com.horizonpack.horizonculture.items.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class CultureRegistries {
+
+    public static final ResourceKey<Registry<ReligionType>> RELIGION_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCulture.MODID, "religion_types"));
+    public static final ResourceKey<Registry<ArtForm>> ART_FORM_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCulture.MODID, "art_forms"));
+    public static final ResourceKey<Registry<WrittenWorkType>> WRITTEN_WORK_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCulture.MODID, "written_works"));
+    public static final ResourceKey<Registry<LanguageVariant>> LANGUAGE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCulture.MODID, "languages"));
+
+    public static final DeferredRegister<ReligionType> RELIGION_TYPES = DeferredRegister.create(RELIGION_KEY, HorizonCulture.MODID);
+    public static final DeferredRegister<ArtForm> ART_FORMS = DeferredRegister.create(ART_FORM_KEY, HorizonCulture.MODID);
+    public static final DeferredRegister<WrittenWorkType> WRITTEN_WORK_TYPES = DeferredRegister.create(WRITTEN_WORK_KEY, HorizonCulture.MODID);
+    public static final DeferredRegister<LanguageVariant> LANGUAGE_VARIANTS = DeferredRegister.create(LANGUAGE_KEY, HorizonCulture.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonCulture.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonCulture.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonCulture.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonCulture.MODID);
+    public static final DeferredRegister<SoundEvent> SOUND_EVENTS = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.SOUND_EVENT, HorizonCulture.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(RELIGION_KEY).sync(true));
+        event.register(new RegistryBuilder<>(ART_FORM_KEY).sync(true));
+        event.register(new RegistryBuilder<>(WRITTEN_WORK_KEY).sync(true));
+        event.register(new RegistryBuilder<>(LANGUAGE_KEY).sync(true));
+    }
+
+    static {
+        ReligionType.registerAll();
+        ArtForm.registerAll();
+        WrittenWorkType.registerAll();
+        LanguageVariant.registerAll();
+        // Instrument registration is handled directly as Items (see Section 6)
+    }
+}
+5. Religion System & Registry
+File: data/registry/ReligionType.java
+code
+Java
+package com.horizonpack.horizonculture.data.registry;
+
+import com.horizonpack.horizonculture.core.CultureRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record ReligionType(ResourceLocation id, String nameKey, float zealMultiplier, float conversionRate, boolean allowsHolyWar, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("animism", "religion.animism", 0.5f, 0.2f, false, "stone_age");
+        register("ancestor_worship", "religion.ancestor_worship", 0.6f, 0.3f, false, "stone_age");
+        register("nature_worship", "religion.nature_worship", 0.7f, 0.4f, false, "stone_age");
+        register("sun_worship", "religion.sun_worship", 1.0f, 0.6f, true, "copper_age");
+        register("polytheism", "religion.polytheism", 0.8f, 0.5f, true, "bronze_age");
+        register("monotheism", "religion.monotheism", 1.5f, 1.2f, true, "iron_age");
+        register("dualism", "religion.dualism", 1.2f, 0.8f, true, "iron_age");
+        register("philosophy_secular", "religion.philosophy_secular", 0.2f, 0.5f, false, "medieval");
+        register("state_religion", "religion.state_religion", 1.8f, 1.5f, true, "industrial");
+    }
+
+    private static void register(String id, String key, float zeal, float conversion, boolean holyWar, String age) {
+        CultureRegistries.RELIGION_TYPES.register(id, () -> new ReligionType(
+            ResourceLocation.fromNamespaceAndPath("horizonculture", id), key, zeal, conversion, holyWar, age));
+    }
+}
+Total Religion Types registered: 9
+6. Musical Instruments Registry
+File: items/InstrumentItem.java
+code
+Java
+package com.horizonpack.horizonculture.items;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import java.util.function.Supplier;
+
+public class InstrumentItem extends Item {
+    private final Supplier<SoundEvent> instrumentSound;
+    private final int buffRadius;
+    private final String instrumentType;
+
+    public InstrumentItem(Properties properties, Supplier<SoundEvent> sound, int radius, String type) {
+        super(properties);
+        this.instrumentSound = sound;
+        this.buffRadius = radius;
+        this.instrumentType = type;
+    }
+
+    @Override
+    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+        level.playSound(null, player.getX(), player.getY(), player.getZ(), instrumentSound.get(), SoundSource.RECORDS, 1.0f, 1.0f);
+        
+        if (!level.isClientSide) {
+            // Apply localized morale/culture buff via CultureEngine
+            com.horizonpack.horizonculture.systems.CultureEngine.applyMusicalBuff(level, player.blockPosition(), buffRadius, instrumentType);
+            player.getCooldowns().addCooldown(this, 100); // 5 second cooldown
+        }
+        return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
+    }
+}
+Instrument Registration in CultureRegistries.java:
+code
+Java
+// Assume SoundEvents are registered in SOUND_EVENTS registry
+    public static final DeferredItem<Item> BONE_FLUTE = ITEMS.register("bone_flute", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_BONE_FLUTE, 8, "primitive"));
+    public static final DeferredItem<Item> DRUM = ITEMS.register("drum", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_DRUM, 16, "primitive"));
+    public static final DeferredItem<Item> LYRE = ITEMS.register("lyre", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_LYRE, 12, "ancient"));
+    public static final DeferredItem<Item> HARP = ITEMS.register("harp", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_HARP, 16, "ancient"));
+    public static final DeferredItem<Item> LUTE = ITEMS.register("lute", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_LUTE, 12, "medieval"));
+    public static final DeferredItem<Item> VIOLIN = ITEMS.register("violin", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_VIOLIN, 16, "classical"));
+    public static final DeferredItem<Item> TRUMPET = ITEMS.register("trumpet", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_TRUMPET, 32, "classical"));
+    public static final DeferredItem<Item> HORN = ITEMS.register("horn", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_HORN, 48, "primitive"));
+    public static final DeferredItem<Item> ORGAN = ITEMS.register("organ", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_ORGAN, 64, "classical"));
+    public static final DeferredItem<Item> PIANO = ITEMS.register("piano", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_PIANO, 24, "classical"));
+    public static final DeferredItem<Item> GUITAR = ITEMS.register("guitar", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_GUITAR, 16, "modern"));
+    public static final DeferredItem<Item> SAXOPHONE = ITEMS.register("saxophone", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_SAXOPHONE, 20, "modern"));
+    public static final DeferredItem<Item> ELECTRIC_GUITAR = ITEMS.register("electric_guitar", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_ELECTRIC_GUITAR, 48, "modern"));
+    public static final DeferredItem<Item> SYNTHESIZER = ITEMS.register("synthesizer", () -> new InstrumentItem(new Item.Properties().stacksTo(1), SOUND_SYNTHESIZER, 48, "modern"));
+    
+    // Media Playback devices
+    public static final DeferredItem<Item> RECORDING_DEVICE = ITEMS.registerSimpleItem("recording_device", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> PHONOGRAPH = ITEMS.registerSimpleItem("phonograph", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> RADIO_TRANSMITTER = ITEMS.registerSimpleItem("radio_transmitter", new Item.Properties().stacksTo(1));
+Total Musical Instruments & Devices registered: 17
+7. Art Forms Registry
+File: data/registry/ArtForm.java
+code
+Java
+package com.horizonpack.horizonculture.data.registry;
+
+import com.horizonpack.horizonculture.core.CultureRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record ArtForm(ResourceLocation id, String nameKey, float prestigeValue, String requiredMaterialTag, String ageId) {
+
+    public static void registerAll() {
+        register("cave_painting", "art.cave_painting", 5.0f, "horizonculture:pigments", "stone_age");
+        register("pottery_art", "art.pottery", 15.0f, "minecraft:clay_balls", "copper_age");
+        register("sculpture", "art.sculpture", 50.0f, "horizondata:chiseled_stones", "bronze_age");
+        register("mosaic", "art.mosaic", 60.0f, "horizonculture:tiles", "iron_age");
+        register("tapestry", "art.tapestry", 75.0f, "minecraft:wool", "medieval");
+        register("oil_painting", "art.oil_painting", 100.0f, "horizonculture:canvas", "medieval");
+        register("fresco", "art.fresco", 120.0f, "horizonculture:plaster", "medieval");
+        register("woodblock_print", "art.woodblock", 80.0f, "minecraft:planks", "medieval");
+        register("photography", "art.photography", 200.0f, "horizonculture:photo_paper", "industrial");
+        register("film", "art.film", 500.0f, "horizonculture:celluloid", "modern");
+        register("digital_art", "art.digital", 300.0f, "horizonpower:computer_component", "modern");
+        register("street_art", "art.street", 50.0f, "horizonculture:spray_paint", "modern");
+    }
+
+    private static void register(String id, String key, float prestige, String matTag, String age) {
+        CultureRegistries.ART_FORMS.register(id, () -> new ArtForm(
+            ResourceLocation.fromNamespaceAndPath("horizonculture", id), key, prestige, matTag, age));
+    }
+}
+Total Art Forms registered: 12
+8. Written Works Registry
+File: data/registry/WrittenWorkType.java
+code
+Java
+package com.horizonpack.horizonculture.data.registry;
+
+import com.horizonpack.horizonculture.core.CultureRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record WrittenWorkType(ResourceLocation id, String nameKey, float knowledgeTransferRate, boolean canBeMassProduced, String ageId) {
+
+    public static void registerAll() {
+        register("clay_tablet", "work.clay_tablet", 0.1f, false, "copper_age");
+        register("papyrus_scroll", "work.papyrus_scroll", 0.3f, false, "bronze_age");
+        register("vellum_manuscript", "work.vellum_manuscript", 0.5f, false, "medieval");
+        register("printed_book", "work.printed_book", 1.0f, true, "industrial");
+        register("newspaper", "work.newspaper", 0.8f, true, "industrial");
+        register("academic_journal", "work.academic_journal", 2.0f, true, "industrial");
+        register("novel", "work.novel", 0.6f, true, "industrial");
+        register("technical_manual", "work.technical_manual", 2.5f, true, "modern");
+    }
+
+    private static void register(String id, String key, float knowledge, boolean massProduced, String age) {
+        CultureRegistries.WRITTEN_WORK_TYPES.register(id, () -> new WrittenWorkType(
+            ResourceLocation.fromNamespaceAndPath("horizonculture", id), key, knowledge, massProduced, age));
+    }
+}
+Total Written Works registered: 8
+9. Language System & Registry
+File: data/registry/LanguageVariant.java
+Each NPC civilization generates adopting a base root. The Linguistics engine scrambles text dynamically based on the viewer's proficiency using ObfuscationMath.
+code
+Java
+package com.horizonpack.horizonculture.data.registry;
+
+import com.horizonpack.horizonculture.core.CultureRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record LanguageVariant(ResourceLocation id, String nameKey, String glyphSet) {
+
+    public static void registerAll() {
+        register("proto_sino", "lang.proto_sino", "hanzi_base");
+        register("altaic_root", "lang.altaic", "cyrillic_base");
+        register("indo_european_base", "lang.indo_european", "latin_base");
+        register("dravidian_root", "lang.dravidian", "brahmi_base");
+        register("afroasiatic_base", "lang.afroasiatic", "arabic_base");
+        register("austronesian_root", "lang.austronesian", "latin_base");
+        register("uralic_base", "lang.uralic", "latin_base");
+        register("mesoamerican_root", "lang.mesoamerican", "maya_glyphs");
+    }
+
+    private static void register(String id, String key, String glyph) {
+        CultureRegistries.LANGUAGE_VARIANTS.register(id, () -> new LanguageVariant(
+            ResourceLocation.fromNamespaceAndPath("horizonculture", id), key, glyph));
+    }
+}
+Total Languages registered: 8
+9.1 Obfuscation Engine
+File: utils/ObfuscationMath.java
+code
+Java
+package com.horizonpack.horizonculture.utils;
+
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
+
+import java.util.Random;
+
+public class ObfuscationMath {
+
+    /**
+     * Translates a string based on the listener's proficiency (0.0 = completely scrambled, 1.0 = clear).
+     */
+    public static Component obfuscateText(String sourceText, float proficiency, long randomSeed) {
+        if (proficiency >= 0.95f) return Component.literal(sourceText);
+
+        Random rand = new Random(randomSeed);
+        StringBuilder output = new StringBuilder();
+        
+        for (char c : sourceText.toCharArray()) {
+            if (Character.isWhitespace(c)) {
+                output.append(c);
+            } else if (rand.nextFloat() > proficiency) {
+                // Scramble Character
+                char scrambled = (char) ('a' + rand.nextInt(26));
+                output.append(scrambled);
+            } else {
+                output.append(c);
+            }
+        }
+        
+        MutableComponent comp = Component.literal(output.toString());
+        if (proficiency < 0.3f) {
+            comp.setStyle(Style.EMPTY.withObfuscated(true).withColor(0x888888));
+        }
+        return comp;
+    }
+}
+10. Faith & Cultural Influence Engine
+File: systems/CultureEngine.java
+code
+Java
+package com.horizonpack.horizonculture.systems;
+
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import com.horizonpack.horizonculture.data.CultureSavedData;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
+
+import java.util.List;
+
+public class CultureEngine {
+
+    public static void init() {}
+
+    public static void tickCulture(ServerLevel level) {
+        CultureSavedData data = CultureSavedData.get(level);
+        
+        // Background tick: expand religious borders and decay unused languages
+        // Called every DayAdvanceEvent from HorizonCore.
+        data.tickInfluenceMap();
+    }
+
+    public static void applyMusicalBuff(ServerLevel level, BlockPos source, int radius, String type) {
+        AABB bounds = new AABB(source).inflate(radius);
+        List<Player> players = level.getEntitiesOfClass(Player.class, bounds);
+        
+        for (Player p : players) {
+            // Apply buffs based on instrument type. Primitive drums grant speed/strength.
+            if (type.equals("primitive")) {
+                p.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.MOVEMENT_SPEED, 200, 0));
+                p.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.DAMAGE_BOOST, 200, 0));
+            } else if (type.equals("classical")) {
+                p.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.REGENERATION, 200, 0));
+            }
+        }
+    }
+    
+    public static void readWrittenWork(Player player, String languageId, float knowledgeValue) {
+        IHorizonPlayerData data = player.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+        if (data != null) {
+            float prof = data.getLanguageProficiency(languageId);
+            if (prof < 1.0f) {
+                // Reading books slowly increases language proficiency
+                data.improveLanguage(languageId, 0.05f);
+            } else {
+                // If fluent, applies the knowledge/research directly to the tech tree
+                // com.horizonpack.horizoncore.systems.ResearchEngine.addBonus(knowledgeValue);
+            }
+        }
+    }
+}
+11. World SavedData (Cultural State)
+File: data/CultureSavedData.java
+Tracks regional religious dominance and languages without requiring chunk loading.
+code
+Java
+package com.horizonpack.horizonculture.data;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class CultureSavedData extends SavedData {
+
+    public static final String DATA_NAME = "horizonculture_state";
+
+    // Civilization UUID -> Religion ID
+    private final Map<UUID, ResourceLocation> civReligions = new HashMap<>();
+    
+    // Civilization UUID -> Language ID
+    private final Map<UUID, ResourceLocation> civLanguages = new HashMap<>();
+
+    public static CultureSavedData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(CultureSavedData::new, CultureSavedData::load),
+                DATA_NAME
+        );
+    }
+
+    public ResourceLocation getCivReligion(UUID civId) {
+        return civReligions.getOrDefault(civId, ResourceLocation.fromNamespaceAndPath("horizonculture", "animism"));
+    }
+
+    public void setCivReligion(UUID civId, ResourceLocation religion) {
+        civReligions.put(civId, religion);
+        setDirty();
+    }
+
+    public void tickInfluenceMap() {
+        // Border expansion mathematics for religious pressure
+        setDirty();
+    }
+
+    @Override
+    public @NotNull CompoundTag save(@NotNull CompoundTag tag) {
+        ListTag relTag = new ListTag();
+        civReligions.forEach((uuid, rel) -> {
+            CompoundTag c = new CompoundTag();
+            c.putUUID("Civ", uuid);
+            c.putString("Rel", rel.toString());
+            relTag.add(c);
+        });
+        tag.put("Religions", relTag);
+        return tag;
+    }
+
+    public static CultureSavedData load(CompoundTag tag) {
+        CultureSavedData data = new CultureSavedData();
+        ListTag relTag = tag.getList("Religions", Tag.TAG_COMPOUND);
+        for (int i = 0; i < relTag.size(); i++) {
+            CompoundTag c = relTag.getCompound(i);
+            data.civReligions.put(c.getUUID("Civ"), ResourceLocation.parse(c.getString("Rel")));
+        }
+        return data;
+    }
+}
+12. Block & Item Registration
+File: core/CultureRegistries.java (Appended blocks)
+code
+Java
+public static final DeferredBlock<Block> PRINTING_PRESS = BLOCKS.registerBlock("printing_press", () -> new PrintingPressBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(3.5f)));
+    public static final DeferredBlock<Block> PHONOGRAPH = BLOCKS.registerBlock("phonograph_block", () -> new PhonographBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(2.0f)));
+    public static final DeferredBlock<Block> SCULPTING_STATION = BLOCKS.registerBlock("sculpting_station", () -> new SculptingStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(4.0f)));
+    public static final DeferredBlock<Block> ART_CANVAS = BLOCKS.registerBlock("art_canvas", () -> new ArtCanvasBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOL).strength(0.5f).noOcclusion()));
+    
+    public static final java.util.function.Supplier<BlockEntityType<PrintingPressBlockEntity>> PRINTING_PRESS_BE = BLOCK_ENTITIES.register("printing_press", () -> BlockEntityType.Builder.of(PrintingPressBlockEntity::new, PRINTING_PRESS.get()).build(null));
+    public static final java.util.function.Supplier<BlockEntityType<PhonographBlockEntity>> PHONOGRAPH_BE = BLOCK_ENTITIES.register("phonograph_block", () -> BlockEntityType.Builder.of(PhonographBlockEntity::new, PHONOGRAPH.get()).build(null));
+    public static final java.util.function.Supplier<BlockEntityType<ArtCanvasBlockEntity>> ART_CANVAS_BE = BLOCK_ENTITIES.register("art_canvas", () -> BlockEntityType.Builder.of(ArtCanvasBlockEntity::new, ART_CANVAS.get()).build(null));
+
+    // Base items auto-registered loop handled conventionally.
+13. Block Entities
+13.1 PrintingPressBlockEntity
+File: blockentities/PrintingPressBlockEntity.java
+Handles the rapid duplication of written works. Consumes paper and ink, outputting multiple copies. Massively boosts tech spread in HorizonSociety.
+code
+Java
+package com.horizonpack.horizonculture.blockentities;
+
+import com.horizonpack.horizonculture.core.CultureRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.items.ItemStackHandler;
+import org.jetbrains.annotations.Nullable;
+
+public class PrintingPressBlockEntity extends BlockEntity implements MenuProvider {
+
+    // 0: Master Copy, 1: Paper Input, 2: Ink Input, 3: Output
+    public final ItemStackHandler inventory = new ItemStackHandler(4) {
+        @Override
+        protected void onContentsChanged(int slot) {
+            setChanged();
+        }
+    };
+
+    private int progress = 0;
+    private static final int MAX_PROGRESS = 100;
+
+    public PrintingPressBlockEntity(BlockPos pos, BlockState state) {
+        super(CultureRegistries.PRINTING_PRESS_BE.get(), pos, state);
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, PrintingPressBlockEntity be) {
+        if (!be.inventory.getStackInSlot(0).isEmpty() && !be.inventory.getStackInSlot(1).isEmpty() && !be.inventory.getStackInSlot(2).isEmpty()) {
+            if (be.inventory.getStackInSlot(3).getCount() < 64) {
+                be.progress++;
+                if (be.progress >= MAX_PROGRESS) {
+                    be.inventory.getStackInSlot(1).shrink(1); // Consume Paper
+                    be.inventory.getStackInSlot(2).shrink(1); // Consume Ink
+                    
+                    ItemStack output = be.inventory.getStackInSlot(0).copy();
+                    output.setCount(1);
+                    
+                    if (be.inventory.getStackInSlot(3).isEmpty()) {
+                        be.inventory.setStackInSlot(3, output);
+                    } else {
+                        be.inventory.getStackInSlot(3).grow(1);
+                    }
+                    
+                    be.progress = 0;
+                    be.setChanged();
+                }
+                return;
+            }
+        }
+        if (be.progress > 0) {
+            be.progress--;
+            be.setChanged();
+        }
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.put("Inventory", inventory.serializeNBT(registries));
+        tag.putInt("Progress", progress);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("Inventory")) inventory.deserializeNBT(registries, tag.getCompound("Inventory"));
+        progress = tag.getInt("Progress");
+    }
+
+    @Override
+    public Component getDisplayName() {
+        return Component.translatable("block.horizonculture.printing_press");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player player) {
+        return null; // Linked to GUI container in implementation
+    }
+}
+14. Event Hooks
+File: events/CultureEventHandlers.java
+Hooks into Chat to enforce language barriers dynamically.
+code
+Java
+package com.horizonpack.horizonculture.events;
+
+import com.horizonpack.horizoncore.capabilities.HorizonCapabilities;
+import com.horizonpack.horizoncore.capabilities.IHorizonPlayerData;
+import com.horizonpack.horizonculture.core.HorizonCulture;
+import com.horizonpack.horizonculture.utils.ObfuscationMath;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.ServerChatEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonCulture.MODID)
+public class CultureEventHandlers {
+
+    @SubscribeEvent
+    public static void onServerChat(ServerChatEvent event) {
+        ServerPlayer sender = event.getPlayer();
+        String rawMessage = event.getRawText();
+        
+        // Determine the sender's primary language from HorizonSociety/HorizonCore data
+        String senderLanguageId = "indo_european_base"; 
+
+        event.setMessage(Component.literal(rawMessage)); // Base
+        
+        // The event system in NeoForge allows formatting chat per-recipient, but for raw manipulation, 
+        // we override the component dispatch. (Simplified here for structural demonstration).
+        /*
+        for (ServerPlayer receiver : sender.server.getPlayerList().getPlayers()) {
+            IHorizonPlayerData data = receiver.getCapability(HorizonCapabilities.PLAYER_DATA).orElse(null);
+            float proficiency = data != null ? data.getLanguageProficiency(senderLanguageId) : 0.0f;
+            
+            Component obfuscated = ObfuscationMath.obfuscateText(rawMessage, proficiency, rawMessage.hashCode());
+            // Send custom packet to receiver with the specific obfuscated component
+        }
+        event.setCanceled(true);
+        */
+    }
+}
+15. Network Packets
+File: network/packets/TranslateMessagePacket.java
+Used to send the individually obfuscated strings to each client during chat or book reading.
+code
+Java
+package com.horizonpack.horizonculture.network.packets;
+
+import com.horizonpack.horizonculture.core.HorizonCulture;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ComponentSerialization;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record TranslateMessagePacket(Component message) implements CustomPacketPayload {
+
+    public static final Type<TranslateMessagePacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonCulture.MODID, "translate_message"));
+
+    public static final StreamCodec<ByteBuf, TranslateMessagePacket> STREAM_CODEC = StreamCodec.composite(
+        ComponentSerialization.STREAM_CODEC, TranslateMessagePacket::message,
+        TranslateMessagePacket::new
+    );
+
+    @Override
+    public Type<TranslateMessagePacket> type() { return TYPE; }
+
+    public static void handleClient(TranslateMessagePacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.client.Minecraft.getInstance().gui.getChat().addMessage(packet.message());
+        });
+    }
+}
+16. Configuration
+File: core/CultureConfig.java
+code
+Java
+package com.horizonpack.horizonculture.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class CultureConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue languageLearningRate;
+        public final ModConfigSpec.BooleanValue enforceLanguageBarriers;
+        public final ModConfigSpec.BooleanValue enableHolyWars;
+        public final ModConfigSpec.IntValue artPrestigeRadius;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("linguistics");
+            languageLearningRate = builder.comment("Multiplier for how fast players learn NPC languages").defineInRange("languageLearningRate", 1.0, 0.1, 10.0);
+            enforceLanguageBarriers = builder.comment("If true, chat and books are obfuscated if the player lacks proficiency").define("enforceLanguageBarriers", true);
+            builder.pop();
+
+            builder.push("religion");
+            enableHolyWars = builder.comment("Allow NPC civilizations to declare war over religious differences").define("enableHolyWars", true);
+            builder.pop();
+            
+            builder.push("art");
+            artPrestigeRadius = builder.comment("Radius in blocks that placed Art forms boost settlement happiness").defineInRange("artPrestigeRadius", 64, 16, 256);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showProficiencyHUD;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showProficiencyHUD = builder.comment("Shows current language proficiency when entering a new civilization zone").define("showProficiencyHUD", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+17. Data Pack Integration
+Submods and data packs can register new Faith Types using the Dynamic Registry framework exposed in Section 4. Writing JSON files matching the structure of ReligionType directly to data/horizonculture/religion_types/ adds completely new faiths to the engine automatically.
+18. Blockstate & Model JSONs
+18.1 Printing Press Blockstate
+assets/horizonculture/blockstates/printing_press.json
+code
+JSON
+{
+  "variants": {
+    "facing=north": { "model": "horizonculture:block/printing_press" },
+    "facing=south": { "model": "horizonculture:block/printing_press", "y": 180 },
+    "facing=east":  { "model": "horizonculture:block/printing_press", "y": 90 },
+    "facing=west":  { "model": "horizonculture:block/printing_press", "y": 270 }
+  }
+}
+18.2 Printing Press Model
+assets/horizonculture/models/block/printing_press.json
+code
+JSON
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "top": "horizonculture:block/printing_press_top",
+    "front": "horizonculture:block/printing_press_front",
+    "side": "horizonculture:block/printing_press_side"
+  }
+}
+18.3 Violin Item Model
+assets/horizonculture/models/item/violin.json
+code
+JSON
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "horizonculture:item/violin"
+  }
+}
+19. Recipe JSONs
+19.1 Crafting: Printing Press
+data/horizonculture/recipes/printing_press.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "industrial" }
+  ],
+  "pattern": [
+    "III",
+    "P P",
+    "WWW"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "P": { "item": "minecraft:piston" },
+    "W": { "item": "minecraft:oak_planks" }
+  },
+  "result": {
+    "id": "horizonculture:printing_press",
+    "count": 1
+  }
+}
+19.2 Crafting: Violin
+data/horizonculture/recipes/violin.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "medieval" }
+  ],
+  "pattern": [
+    " S ",
+    " W ",
+    " W "
+  ],
+  "key": {
+    "S": { "item": "minecraft:string" },
+    "W": { "item": "minecraft:spruce_planks" }
+  },
+  "result": {
+    "id": "horizonculture:violin",
+    "count": 1
+  }
+}
+20. Loot Table JSONs
+20.1 Printing Press Block Drop
+data/horizonculture/loot_tables/blocks/printing_press.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonculture:printing_press",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "source": "block_entity",
+              "include": ["horizonculture:inventory"]
+            }
+          ]
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+21. Tag JSONs
+21.1 Musical Instruments Tag
+data/horizonculture/tags/items/instruments.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonculture:bone_flute",
+    "horizonculture:drum",
+    "horizonculture:lyre",
+    "horizonculture:harp",
+    "horizonculture:lute",
+    "horizonculture:violin",
+    "horizonculture:trumpet",
+    "horizonculture:horn",
+    "horizonculture:organ",
+    "horizonculture:piano",
+    "horizonculture:guitar",
+    "horizonculture:saxophone",
+    "horizonculture:electric_guitar",
+    "horizonculture:synthesizer"
+  ]
+}
+21.2 Written Works Tag
+data/horizonculture/tags/items/written_works.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonculture:clay_tablet",
+    "horizonculture:papyrus_scroll",
+    "horizonculture:vellum_manuscript",
+    "horizonculture:printed_book",
+    "horizonculture:newspaper",
+    "horizonculture:academic_journal",
+    "horizonculture:novel",
+    "horizonculture:technical_manual"
+  ]
+}
+22. Lang / Localization
+assets/horizonculture/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonculture.arts": "HorizonCulture - Arts & Literacy",
+  "itemGroup.horizonculture.instruments": "HorizonCulture - Musical Instruments",
+
+  "block.horizonculture.printing_press": "Printing Press",
+  "block.horizonculture.phonograph_block": "Phonograph",
+  "block.horizonculture.sculpting_station": "Sculpting Station",
+  "block.horizonculture.art_canvas": "Art Canvas",
+
+  "item.horizonculture.bone_flute": "Bone Flute",
+  "item.horizonculture.drum": "Tribal Drum",
+  "item.horizonculture.lyre": "Lyre",
+  "item.horizonculture.harp": "Harp",
+  "item.horizonculture.lute": "Lute",
+  "item.horizonculture.violin": "Violin",
+  "item.horizonculture.trumpet": "Trumpet",
+  "item.horizonculture.horn": "Hunting Horn",
+  "item.horizonculture.organ": "Pipe Organ",
+  "item.horizonculture.piano": "Piano",
+  "item.horizonculture.guitar": "Acoustic Guitar",
+  "item.horizonculture.saxophone": "Saxophone",
+  "item.horizonculture.electric_guitar": "Electric Guitar",
+  "item.horizonculture.synthesizer": "Synthesizer",
+  "item.horizonculture.recording_device": "Recording Device",
+  "item.horizonculture.phonograph": "Phonograph Record",
+  "item.horizonculture.radio_transmitter": "Radio Transmitter",
+
+  "item.horizonculture.clay_tablet": "Clay Tablet",
+  "item.horizonculture.papyrus_scroll": "Papyrus Scroll",
+  "item.horizonculture.vellum_manuscript": "Vellum Manuscript",
+  "item.horizonculture.printed_book": "Printed Book",
+  "item.horizonculture.newspaper": "Broadsheet Newspaper",
+  "item.horizonculture.academic_journal": "Academic Journal",
+  "item.horizonculture.novel": "Fictional Novel",
+  "item.horizonculture.technical_manual": "Technical Manual",
+
+  "religion.animism": "Animism",
+  "religion.polytheism": "Polytheism",
+  "religion.monotheism": "Monotheism",
+  "religion.dualism": "Dualism",
+  "religion.philosophy_secular": "Secular Philosophy",
+  "religion.ancestor_worship": "Ancestor Worship",
+  "religion.nature_worship": "Nature Worship",
+  "religion.sun_worship": "Sun Cult",
+  "religion.state_religion": "Imperial Cult",
+
+  "art.cave_painting": "Cave Painting",
+  "art.pottery": "Ornamental Pottery",
+  "art.sculpture": "Marble Sculpture",
+  "art.mosaic": "Tile Mosaic",
+  "art.tapestry": "Woven Tapestry",
+  "art.oil_painting": "Oil Painting",
+  "art.fresco": "Plaster Fresco",
+  "art.woodblock": "Woodblock Print",
+  "art.photography": "Photograph",
+  "art.film": "Celluloid Film",
+  "art.digital": "Digital Render",
+  "art.street": "Street Mural",
+
+  "lang.proto_sino": "Proto-Sino",
+  "lang.altaic": "Altaic Root",
+  "lang.indo_european": "Indo-European Base",
+  "lang.dravidian": "Dravidian Root",
+  "lang.afroasiatic": "Afroasiatic Base",
+  "lang.austronesian": "Austronesian Root",
+  "lang.uralic": "Uralic Base",
+  "lang.mesoamerican": "Mesoamerican Root",
+
+  "gui.horizonculture.proficiency": "Proficiency: %d%%",
+  "gui.horizonculture.scrambled": "You cannot understand this language.",
+
+  "advancements.horizonculture.root.title": "The Spark of Culture",
+  "advancements.horizonculture.root.desc": "Create your first work of art.",
+  "advancements.horizonculture.press.title": "The Written Word",
+  "advancements.horizonculture.press.desc": "Construct a printing press and spread knowledge."
+}
+23. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonculture'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonculture', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+24. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonculture"
+    version = "1.0.0"
+    displayName = "Horizon Culture & Arts"
+    description = """
+Manages the non-material evolution of civilization for the Horizon Corebreach modpack. 
+Includes dynamic language translation obfuscation, 9 religious frameworks, 
+craftable musical instruments, and the evolution of written literature and art.
+"""
+    logoFile = "horizonculture.png"
+
+[[dependencies.horizonculture]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonculture]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonculture]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonculture]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonculture]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+25. Critical Implementation Notes
+Client-Side Obfuscation Injection:
+Modifying chat directly via ServerChatEvent is unsafe for formatting compatibility with other mods. Instead, the server must calculate proficiency and dispatch the TranslateMessagePacket. The client intercepts this in a localized GUI render hook (e.g., ClientChatReceivedEvent) and applies the ObfuscationMath algorithm locally to retain format integrity while scrambling the payload based on synced capability data.
+Language Font Rendering:
+To accurately portray distinct language roots (e.g., Mesoamerican vs Cyrillic), horizonculture dynamically injects resource pack font mappings. When obfuscation fires for an unknown language, it replaces standard A-Z characters with Unicode glyphs assigned to a custom TTF font loaded in the mod's assets/minecraft/font/default.json overrides.
+Printing Press Performance:
+The PrintingPressBlockEntity performs a deep copy of complex WrittenBookItem NBT components. To prevent server lag spikes when copying massive 50-page books containing hundreds of JSON text components, the deep copy operation in serverTick must be segmented, or restricted to cloning the fundamental Data Component hash map rather than reparsing the strings.
+Instrument Sound Attenuation:
+By default, Minecraft OpenAL culls sounds beyond 16 blocks. Because instruments like the Church Organ or Drum need to be heard across an entire settlement, the registered SoundEvent must use SoundEvent.createFixedRangeEvent(id, range) with a radius set to 64 or 128 in CultureRegistries.java.
+Musical Instrument MIDI Parsing:
+Advanced instruments (Piano, Synthesizer) do not just play one static sound. They utilize a custom MidiPlaybackHelper that reads simple byte-arrays stored in NBT (from "Sheet Music" items) and sequentially plays individual pitch-shifted note particles over several seconds using a localized tick queue.
+Dynamic Art Canvas NBT Limits:
+ArtCanvasBlockEntity allows players to "paint" by saving 16x16 pixel grids into the BlockEntity NBT. A 256-int array can quickly exceed network packet limits if a player builds a gallery of 100 canvases. Ensure getUpdatePacket() utilizes a tightly packed byte[] format representing a custom indexed color palette instead of raw RGB ints.
+Religion Influence Mathematics:
+CultureSavedData.tickInfluenceMap() evaluates religious pressure using a Voronoi diagram approximation. To prevent total server lockup when scanning thousands of settlement chunks, the data structure stores only "Epicenter" coordinates and applies a basic inverse-square distance calculation upon chunk load, rather than iterating every block coordinate globally.
+Holy War & Horizonsociety Integration:
+ReligionType contains the allowsHolyWar boolean. When CultureEngine detects border friction between two civilizations with overlapping religious pressure, it injects a hostile diplomatic modifier directly into horizonsociety's DiplomacyEngine. If both civs have allowsHolyWar = true, the aggression multiplier squares itself, bypassing standard trade-pact restrictions.

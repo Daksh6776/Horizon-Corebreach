@@ -1,0 +1,3397 @@
+# HorizonWorld — Detailed Technical Specification
+**Mod ID:** `horizonworld`  
+**Version:** 1.0.0  
+**Platform:** NeoForge 1.21.1 / Java 21  
+**Role:** World Generation, Climate, and Ecology — the living planetary substrate for all Horizon mods  
+**Absorbed mods:** HorizonGenesis (terrain/geology), HorizonClimate (weather/seasons/disasters), HorizonEcology (ecosystems)  
+**Depends on:** HorizonCore (`horizoncore`), HorizonData (`horizondata`)
+
+---
+
+## Table of Contents
+1. [Overview & Responsibilities](#1-overview--responsibilities)
+2. [File & Package Structure](#2-file--package-structure)
+3. [Mod Entry Point](#3-mod-entry-point)
+4. [Continental Formation & Tectonic System](#4-continental-formation--tectonic-system)
+5. [Geological Layer System](#5-geological-layer-system)
+6. [Custom Chunk Generator](#6-custom-chunk-generator)
+7. [Climate Zone System](#7-climate-zone-system)
+8. [Weather Engine](#8-weather-engine)
+9. [Season System](#9-season-system)
+10. [Natural Disaster System](#10-natural-disaster-system)
+11. [Ecosystem & Biome Ecology](#11-ecosystem--biome-ecology)
+12. [World SavedData & Planet State](#12-world-saveddata--planet-state)
+13. [Block Registry — World-Specific Blocks](#13-block-registry--world-specific-blocks)
+14. [Event Hooks](#14-event-hooks)
+15. [Network Packets](#15-network-packets)
+16. [Configuration](#16-configuration)
+17. [Data Pack Integration](#17-data-pack-integration)
+18. [Blockstate & Model JSONs](#18-blockstate--model-jsons)
+19. [Loot Table JSONs](#19-loot-table-jsons)
+20. [Tag JSONs](#20-tag-jsons)
+21. [Lang / Localization](#21-lang--localization)
+22. [build.gradle](#22-buildgradle)
+23. [neoforge.mods.toml](#23-neoforgemodstom)
+24. [Critical Implementation Notes](#24-critical-implementation-notes)
+
+---
+
+## 1. Overview & Responsibilities
+
+HorizonWorld is the **planetary engine** of the Horizon Corebreach modpack. It replaces Minecraft's default world generation entirely and provides:
+
+- **Continental Formation** — tectonic plate simulation producing distinct landmasses, ocean basins, mountain ranges, rift valleys, and island arcs; configurable presets (Pangaea, Earth-like, Archipelago, custom)
+- **Geological Layer System** — accurate rock strata (sedimentary, igneous, metamorphic) per continent slab, with `GeologyProfile` objects that drive ore vein placement in HorizonData
+- **Custom Chunk Generator** (`HorizonChunkGenerator`) — replaces `NoiseBasedChunkGenerator` with a multi-pass pipeline: continent mask → elevation noise → geological fill → surface layer → feature pass
+- **Climate Zone System** — latitude-driven Koppen-style zones (Tropical, Arid, Temperate, Continental, Polar) applied per biome column; each zone defines temperature range, precipitation, humidity, and solar intensity
+- **Weather Engine** — a per-dimension `WeatherState` machine that drives rain, snow, hail, fog, wind, thunderstorms, hurricanes, tornadoes, blizzards, monsoons, and dust storms; weather is spatially correlated across chunks (no per-chunk rain toggle)
+- **Season System** — four seasons with configurable day lengths, temperature shifts, precipitation patterns, crop growth multipliers, and animal migration triggers; synced to in-game day count via HorizonCore's `DayAdvanceEvent`
+- **Natural Disaster System** — earthquake, volcanic eruption, tsunami, flood, drought, wildfire, avalanche, landslide; each disaster has a geographic probability map, precondition checks, progression phases, and an aftermath cleanup phase
+- **Ecosystem & Biome Ecology** — per-biome ecological balance tracker (predator/prey ratios, plant biomass, soil health, water table); imbalances trigger cascade events listened to by HorizonBiome
+- **Planet SavedData** (`PlanetData`) — server-side singleton storing continent map, tectonic stress values, active disaster list, season state, and the global climate snapshot; never re-computed after world creation
+- **World-specific blocks** — geological surface blocks (`LoamBlock`, `PeatBlock`, `CaicheBlock`, `PermafrostBlock`, `VolcanicAshBlock`, `TephriteBlock`), disaster aftermath blocks (`FloodSiltBlock`, `ScorchedEarthBlock`, `LandslideDebrisBlock`), and climate indicators (`FrostCrackBlock`, `DroughtCrackedEarthBlock`)
+
+Every other Horizon mod that needs to know "where are we in the world" — biome type, latitude, climate zone, soil type, elevation — queries HorizonWorld's APIs.
+
+---
+
+## 2. File & Package Structure
+
+```
+horizon_world/
+├── src/main/java/com/horizonpack/horizonworld/
+│   ├── core/
+│   │   ├── HorizonWorld.java                       ← @Mod entry point
+│   │   ├── WorldRegistries.java                    ← All DeferredRegisters
+│   │   └── WorldConfig.java                        ← ModConfigSpec (common + client)
+│   ├── data/
+│   │   ├── planet/
+│   │   │   ├── PlanetData.java                     ← SavedData: continent map, tectonics, disasters
+│   │   │   ├── ContinentMap.java                   ← 2D grid of continent IDs + ocean mask
+│   │   │   ├── ContinentDefinition.java            ← Data: name, resource profile, tectonic type
+│   │   │   ├── TectonicPlate.java                  ← Data: plate boundary, stress accumulation
+│   │   │   └── GeologyProfile.java                 ← Data: strata layers, ore density hints
+│   │   ├── climate/
+│   │   │   ├── ClimateZone.java                    ← Enum: TROPICAL, ARID, TEMPERATE, CONTINENTAL, POLAR
+│   │   │   ├── ClimateSnapshot.java                ← Per-chunk: temp, humidity, precipitation
+│   │   │   ├── WeatherState.java                   ← Enum+data: current active weather per dimension
+│   │   │   ├── WeatherType.java                    ← Enum: CLEAR, RAIN, SNOW, HAIL, THUNDERSTORM, etc.
+│   │   │   ├── SeasonData.java                     ← SavedData: current season + day-in-season
+│   │   │   └── Season.java                         ← Enum: SPRING, SUMMER, AUTUMN, WINTER
+│   │   ├── disaster/
+│   │   │   ├── DisasterInstance.java               ← Runtime: active disaster with phase + epicenter
+│   │   │   ├── DisasterPhase.java                  ← Enum: PRECURSOR, ACTIVE, PEAK, WANING, AFTERMATH
+│   │   │   ├── DisasterType.java                   ← Enum+data: 9 disaster types
+│   │   │   └── DisasterRegistry.java               ← Runtime registry of active disasters
+│   │   └── ecology/
+│   │       ├── EcologyProfile.java                 ← Per-biome: predator count, prey, biomass, soil
+│   │       ├── EcologyBalance.java                 ← Utility: compute imbalance scores
+│   │       └── SoilType.java                       ← Enum: LOAM, CLAY, SAND, PEAT, VOLCANIC, PERMAFROST
+│   ├── worldgen/
+│   │   ├── HorizonChunkGenerator.java              ← Custom ChunkGenerator
+│   │   ├── HorizonBiomeSource.java                 ← Custom BiomeSource (climate→biome mapping)
+│   │   ├── passes/
+│   │   │   ├── ContinentMaskPass.java              ← Pass 1: land/ocean mask
+│   │   │   ├── ElevationPass.java                  ← Pass 2: elevation noise (plate tectonics)
+│   │   │   ├── GeologyFillPass.java                ← Pass 3: fill strata with geological blocks
+│   │   │   ├── SurfaceLayerPass.java               ← Pass 4: surface soil/rock/grass/sand
+│   │   │   └── FeaturePlacementPass.java           ← Pass 5: vegetation, boulders, springs
+│   │   ├── noise/
+│   │   │   ├── ContinentNoise.java                 ← Continent-scale Simplex noise wrapper
+│   │   │   ├── ElevationNoise.java                 ← Multi-octave elevation + ridge noise
+│   │   │   └── ClimateNoise.java                   ← Latitude + longitude climate interpolation
+│   │   └── features/
+│   │       ├── VolcanicVentFeature.java            ← Volcanic vent + caldera placement
+│   │       ├── HotSpringFeature.java               ← Hydrothermal spring
+│   │       ├── RiftValleyFeature.java              ← Rift valley carver
+│   │       ├── MountainRangeFeature.java           ← Ridge chain carver
+│   │       ├── OceanTrenchFeature.java             ← Deep trench carver
+│   │       └── KimberlitePipeFeature.java          ← Kimberlite pipe (deep diamond deposit)
+│   ├── systems/
+│   │   ├── WeatherEngine.java                      ← Per-tick weather state machine
+│   │   ├── SeasonEngine.java                       ← Season tick, DayAdvanceEvent listener
+│   │   ├── DisasterEngine.java                     ← Disaster precondition check + phase driver
+│   │   ├── EcologyEngine.java                      ← Per-chunk ecology tick (low priority)
+│   │   ├── ClimateEngine.java                      ← ClimateSnapshot computation + cache
+│   │   └── TectonicEngine.java                     ← Stress accumulation between disasters
+│   ├── blocks/
+│   │   ├── geology/
+│   │   │   ├── LoamBlock.java
+│   │   │   ├── PeatBlock.java
+│   │   │   ├── CaicheBlock.java
+│   │   │   ├── PermafrostBlock.java
+│   │   │   ├── VolcanicAshBlock.java
+│   │   │   └── TephriteBlock.java
+│   │   └── disaster/
+│   │       ├── FloodSiltBlock.java
+│   │       ├── ScorchedEarthBlock.java
+│   │       ├── LandslideDebrisBlock.java
+│   │       ├── FrostCrackBlock.java
+│   │       └── DroughtCrackedEarthBlock.java
+│   ├── events/
+│   │   ├── WorldEventHandlers.java                 ← ServerTick, ChunkLoad, DayAdvance handlers
+│   │   └── custom/
+│   │       ├── WeatherChangeEvent.java             ← Fired on weather type transition
+│   │       ├── SeasonChangeEvent.java              ← Fired on season transition
+│   │       ├── DisasterStartEvent.java             ← Fired when disaster begins (cancellable)
+│   │       ├── DisasterPhaseEvent.java             ← Fired on each phase transition
+│   │       ├── DisasterEndEvent.java               ← Fired when disaster resolves
+│   │       ├── EcologyImbalanceEvent.java          ← Fired when ecology score exceeds threshold
+│   │       ├── TectonicStressEvent.java            ← Fired when plate stress peaks
+│   │       └── ClimateZoneEnteredEvent.java        ← Fired when player crosses zone boundary
+│   ├── network/
+│   │   ├── WorldPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncWeatherPacket.java              ← S→C: full WeatherState
+│   │       ├── SyncSeasonPacket.java               ← S→C: season + day-in-season
+│   │       ├── SyncDisasterPacket.java             ← S→C: active disaster list
+│   │       ├── SyncClimatePacket.java              ← S→C: per-player ClimateSnapshot
+│   │       └── DisasterWarningPacket.java          ← S→C: disaster imminent warning
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── ClimateHudOverlay.java              ← Temperature, humidity, wind bar
+│   │   │   ├── SeasonHudOverlay.java               ← Season icon + day counter
+│   │   │   └── DisasterWarningScreen.java          ← Full-screen disaster warning popup
+│   │   ├── render/
+│   │   │   ├── WeatherRenderer.java                ← Custom particle emitters for weather types
+│   │   │   ├── VolcanicAshRenderer.java            ← Ash particle rain during eruptions
+│   │   │   └── AuroraRenderer.java                 ← Aurora Borealis at polar latitudes
+│   │   └── sound/
+│   │       └── WeatherSoundManager.java            ← Ambient weather sound switching
+│   └── utils/
+│       ├── LatLonUtil.java                         ← Block pos → latitude/longitude mapping
+│       ├── ClimateCache.java                       ← Thread-safe LRU ClimateSnapshot cache
+│       └── DisasterMath.java                       ← Disaster radius, falloff, damage calcs
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonworld/
+│   │   ├── blockstates/
+│   │   │   ├── loam.json
+│   │   │   ├── peat.json
+│   │   │   ├── caliche.json
+│   │   │   ├── permafrost.json
+│   │   │   ├── volcanic_ash.json
+│   │   │   ├── tephrite.json
+│   │   │   ├── flood_silt.json
+│   │   │   ├── scorched_earth.json
+│   │   │   ├── landslide_debris.json
+│   │   │   ├── frost_crack.json
+│   │   │   └── drought_cracked_earth.json
+│   │   ├── models/block/
+│   │   │   └── [mirrors blockstates list]
+│   │   ├── models/item/
+│   │   │   └── [mirrors block list]
+│   │   ├── textures/block/
+│   │   │   ├── loam.png                            ← 16×16
+│   │   │   ├── peat.png
+│   │   │   ├── caliche.png
+│   │   │   ├── permafrost.png
+│   │   │   ├── volcanic_ash.png
+│   │   │   ├── tephrite.png
+│   │   │   ├── flood_silt.png
+│   │   │   ├── scorched_earth.png
+│   │   │   ├── landslide_debris.png
+│   │   │   ├── frost_crack.png
+│   │   │   └── drought_cracked_earth.png
+│   │   ├── textures/gui/
+│   │   │   ├── climate_hud.png                     ← 256×64 sprite sheet
+│   │   │   ├── season_icons.png                    ← 64×16 (4 seasons × 16px)
+│   │   │   └── disaster_warning_bg.png             ← 320×240 full-screen overlay
+│   │   ├── particles/
+│   │   │   ├── volcanic_ash.json
+│   │   │   ├── hail.json
+│   │   │   ├── sandstorm.json
+│   │   │   └── monsoon_rain.json
+│   │   ├── sounds/
+│   │   │   ├── weather/
+│   │   │   │   ├── hurricane_loop.ogg
+│   │   │   │   ├── tornado_loop.ogg
+│   │   │   │   ├── blizzard_loop.ogg
+│   │   │   │   ├── monsoon_loop.ogg
+│   │   │   │   ├── hail_loop.ogg
+│   │   │   │   └── dust_storm_loop.ogg
+│   │   │   └── disaster/
+│   │   │       ├── earthquake_rumble.ogg
+│   │   │       ├── volcano_roar.ogg
+│   │   │       ├── tsunami_wave.ogg
+│   │   │       └── wildfire_crackle.ogg
+│   │   └── lang/en_us.json
+│   └── data/horizonworld/
+│       ├── loot_tables/blocks/
+│       │   ├── loam.json
+│       │   ├── peat.json
+│       │   └── [one per block]
+│       ├── tags/blocks/
+│       │   ├── geological_surface.json
+│       │   ├── disaster_blocks.json
+│       │   └── flammable_terrain.json
+│       ├── tags/items/
+│       │   ├── geological_samples.json
+│       │   └── disaster_debris.json
+│       ├── advancements/
+│       │   ├── root.json
+│       │   ├── first_disaster.json
+│       │   ├── all_seasons.json
+│       │   └── all_climate_zones.json
+│       └── worldgen/
+│           ├── biome/
+│           │   └── [see §17]
+│           └── configured_feature/
+│               └── [see §17]
+└── build.gradle
+```
+
+---
+
+## 3. Mod Entry Point
+
+```java
+package com.horizonpack.horizonworld.core;
+
+import com.horizonpack.horizonworld.events.WorldEventHandlers;
+import com.horizonpack.horizonworld.network.WorldPacketHandler;
+import com.horizonpack.horizonworld.systems.*;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonWorld.MODID)
+public class HorizonWorld {
+    public static final String MODID = "horizonworld";
+
+    public HorizonWorld(IEventBus modEventBus, ModContainer modContainer) {
+        // Config
+        modContainer.registerConfig(ModConfig.Type.COMMON, WorldConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, WorldConfig.CLIENT_SPEC);
+
+        // All deferred registers
+        WorldRegistries.BLOCKS.register(modEventBus);
+        WorldRegistries.ITEMS.register(modEventBus);
+        WorldRegistries.BLOCK_ENTITIES.register(modEventBus);
+        WorldRegistries.BIOMES.register(modEventBus);
+        WorldRegistries.CHUNK_GENERATORS.register(modEventBus);
+        WorldRegistries.FEATURES.register(modEventBus);
+        WorldRegistries.PARTICLE_TYPES.register(modEventBus);
+        WorldRegistries.SOUND_EVENTS.register(modEventBus);
+        WorldRegistries.CREATIVE_TABS.register(modEventBus);
+
+        // Lifecycle
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(WorldPacketHandler::register);
+
+        // Forge event bus (game events)
+        NeoForge.EVENT_BUS.register(WorldEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            // Register chunk generator codec
+            WorldRegistries.registerChunkGeneratorCodec();
+            // Prime the climate cache
+            ClimateEngine.init();
+        });
+    }
+}
+```
+
+---
+
+## 4. Continental Formation & Tectonic System
+
+### 4.1 `ContinentDefinition.java`
+
+```java
+package com.horizonpack.horizonworld.data.planet;
+
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.resources.ResourceLocation;
+
+import java.util.List;
+
+/**
+ * Immutable data object describing one landmass.
+ * Registered in a DeferredRegister so data packs can define new continents.
+ */
+public record ContinentDefinition(
+        ResourceLocation id,
+        String displayName,
+        TectonicType tectonicType,       // CONTINENTAL, OCEANIC, ISLAND_ARC, CRATON
+        ResourceLocation geologyProfileId,
+        float baseElevation,             // metres above sea level, 0–6000
+        float seismicActivity,           // 0.0–1.0
+        float volcanicActivity,          // 0.0–1.0
+        List<ResourceBias> resourceBiases // which ores are more common
+) {
+    public static final MapCodec<ContinentDefinition> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+            ResourceLocation.CODEC.fieldOf("id").forGetter(ContinentDefinition::id),
+            Codec.STRING.fieldOf("display_name").forGetter(ContinentDefinition::displayName),
+            TectonicType.CODEC.fieldOf("tectonic_type").forGetter(ContinentDefinition::tectonicType),
+            ResourceLocation.CODEC.fieldOf("geology_profile").forGetter(ContinentDefinition::geologyProfileId),
+            Codec.FLOAT.fieldOf("base_elevation").forGetter(ContinentDefinition::baseElevation),
+            Codec.FLOAT.fieldOf("seismic_activity").forGetter(ContinentDefinition::seismicActivity),
+            Codec.FLOAT.fieldOf("volcanic_activity").forGetter(ContinentDefinition::volcanicActivity),
+            ResourceBias.CODEC.listOf().fieldOf("resource_biases").forGetter(ContinentDefinition::resourceBiases)
+    ).apply(inst, ContinentDefinition::new));
+
+    public enum TectonicType {
+        CONTINENTAL, OCEANIC, ISLAND_ARC, CRATON;
+        public static final Codec<TectonicType> CODEC = Codec.STRING.xmap(
+                TectonicType::valueOf, TectonicType::name);
+    }
+
+    public record ResourceBias(ResourceLocation oreId, float multiplier) {
+        public static final MapCodec<ResourceBias> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+                ResourceLocation.CODEC.fieldOf("ore").forGetter(ResourceBias::oreId),
+                Codec.FLOAT.fieldOf("multiplier").forGetter(ResourceBias::multiplier)
+        ).apply(inst, ResourceBias::new));
+    }
+}
+```
+
+### 4.2 `TectonicPlate.java`
+
+```java
+package com.horizonpack.horizonworld.data.planet;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Runtime tectonic plate.  Created once during world-gen init and stored in PlanetData.
+ * Tracks boundary stress that drives earthquake/volcanic disaster probability.
+ */
+public class TectonicPlate {
+    private final int plateId;
+    private final List<PlateBoundary> boundaries = new ArrayList<>();
+    /** 0.0 = calm; 1.0 = imminent rupture */
+    private float stress;
+    private int daysSinceLastQuake;
+
+    public TectonicPlate(int plateId) {
+        this.plateId = plateId;
+        this.stress = 0f;
+    }
+
+    /** Called by TectonicEngine every in-game day. */
+    public void accumulateStress(float dailyRate) {
+        stress = Math.min(1.0f, stress + dailyRate);
+        daysSinceLastQuake++;
+    }
+
+    public void releaseStress(float amount) {
+        stress = Math.max(0f, stress - amount);
+        daysSinceLastQuake = 0;
+    }
+
+    public float stress()            { return stress; }
+    public int plateId()             { return plateId; }
+    public List<PlateBoundary> boundaries() { return boundaries; }
+
+    // --- NBT ---
+    public CompoundTag save() {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt("PlateId", plateId);
+        tag.putFloat("Stress", stress);
+        tag.putInt("DaysSinceQuake", daysSinceLastQuake);
+        ListTag bList = new ListTag();
+        for (PlateBoundary b : boundaries) bList.add(b.save());
+        tag.put("Boundaries", bList);
+        return tag;
+    }
+
+    public static TectonicPlate load(CompoundTag tag) {
+        TectonicPlate plate = new TectonicPlate(tag.getInt("PlateId"));
+        plate.stress = tag.getFloat("Stress");
+        plate.daysSinceLastQuake = tag.getInt("DaysSinceQuake");
+        ListTag bList = tag.getList("Boundaries", Tag.TAG_COMPOUND);
+        for (int i = 0; i < bList.size(); i++) {
+            plate.boundaries.add(PlateBoundary.load(bList.getCompound(i)));
+        }
+        return plate;
+    }
+
+    public record PlateBoundary(int otherPlateId, BoundaryType type, int[] epicenterX, int[] epicenterZ) {
+        public enum BoundaryType { CONVERGENT, DIVERGENT, TRANSFORM }
+
+        public CompoundTag save() {
+            CompoundTag tag = new CompoundTag();
+            tag.putInt("OtherPlate", otherPlateId);
+            tag.putString("BoundaryType", type.name());
+            tag.putIntArray("EpicenterX", epicenterX);
+            tag.putIntArray("EpicenterZ", epicenterZ);
+            return tag;
+        }
+
+        public static PlateBoundary load(CompoundTag tag) {
+            return new PlateBoundary(
+                    tag.getInt("OtherPlate"),
+                    BoundaryType.valueOf(tag.getString("BoundaryType")),
+                    tag.getIntArray("EpicenterX"),
+                    tag.getIntArray("EpicenterZ"));
+        }
+    }
+}
+```
+
+### 4.3 `GeologyProfile.java`
+
+```java
+package com.horizonpack.horizonworld.data.planet;
+
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.List;
+
+/**
+ * Describes the rock strata that GeologyFillPass uses to fill chunk columns.
+ * Data-pack driven via CODEC.
+ */
+public record GeologyProfile(
+        ResourceLocation id,
+        List<StrataLayer> layers,         // top→bottom order; last covers to bedrock
+        float metamorphicDepthFraction,   // fraction of world height where metamorphic rock starts
+        float igneousIntrusions           // probability per chunk of igneous intrusion column
+) {
+    public static final MapCodec<GeologyProfile> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+            ResourceLocation.CODEC.fieldOf("id").forGetter(GeologyProfile::id),
+            StrataLayer.CODEC.listOf().fieldOf("layers").forGetter(GeologyProfile::layers),
+            Codec.FLOAT.fieldOf("metamorphic_depth_fraction").forGetter(GeologyProfile::metamorphicDepthFraction),
+            Codec.FLOAT.fieldOf("igneous_intrusions").forGetter(GeologyProfile::igneousIntrusions)
+    ).apply(inst, GeologyProfile::new));
+
+    public record StrataLayer(
+            ResourceLocation blockId,   // horizondata block id
+            int minThickness,           // in blocks
+            int maxThickness,
+            float noiseVariation        // how much thickness varies per chunk
+    ) {
+        public static final MapCodec<StrataLayer> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+                ResourceLocation.CODEC.fieldOf("block").forGetter(StrataLayer::blockId),
+                Codec.INT.fieldOf("min_thickness").forGetter(StrataLayer::minThickness),
+                Codec.INT.fieldOf("max_thickness").forGetter(StrataLayer::maxThickness),
+                Codec.FLOAT.fieldOf("noise_variation").forGetter(StrataLayer::noiseVariation)
+        ).apply(inst, StrataLayer::new));
+    }
+}
+```
+
+---
+
+## 5. Geological Layer System
+
+### 5.1 `PlanetData.java` (SavedData)
+
+```java
+package com.horizonpack.horizonworld.data.planet;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class PlanetData extends SavedData {
+    public static final String KEY = "horizonworld_planet";
+
+    private ContinentMap continentMap;
+    private final List<TectonicPlate> plates = new ArrayList<>();
+    private final List<DisasterInstance> activeDisasters = new ArrayList<>();
+    /** Incremented by GeologyFillPass; queried by HorizonData ore feature placement. */
+    private final java.util.Map<String, GeologyProfile> continentProfiles = new java.util.HashMap<>();
+
+    private PlanetData() {}
+
+    public static PlanetData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(PlanetData::new, PlanetData::load),
+                KEY);
+    }
+
+    // --- Accessors ---
+    public ContinentMap continentMap()                { return continentMap; }
+    public void setContinentMap(ContinentMap map)     { continentMap = map; setDirty(); }
+    public List<TectonicPlate> plates()               { return plates; }
+    public List<DisasterInstance> activeDisasters()   { return activeDisasters; }
+
+    public void addDisaster(DisasterInstance d) {
+        activeDisasters.add(d);
+        setDirty();
+    }
+
+    public void removeDisaster(DisasterInstance d) {
+        activeDisasters.remove(d);
+        setDirty();
+    }
+
+    public GeologyProfile getProfile(String continentId) {
+        return continentProfiles.get(continentId);
+    }
+
+    public void putProfile(String continentId, GeologyProfile profile) {
+        continentProfiles.put(continentId, profile);
+        setDirty();
+    }
+
+    // --- Serialization ---
+    @Override
+    public CompoundTag save(CompoundTag tag) {
+        if (continentMap != null) tag.put("ContinentMap", continentMap.save());
+        ListTag plateList = new ListTag();
+        for (TectonicPlate p : plates) plateList.add(p.save());
+        tag.put("Plates", plateList);
+        ListTag disasterList = new ListTag();
+        for (DisasterInstance d : activeDisasters) disasterList.add(d.save());
+        tag.put("ActiveDisasters", disasterList);
+        return tag;
+    }
+
+    private static PlanetData load(CompoundTag tag) {
+        PlanetData data = new PlanetData();
+        if (tag.contains("ContinentMap")) {
+            data.continentMap = ContinentMap.load(tag.getCompound("ContinentMap"));
+        }
+        ListTag plateList = tag.getList("Plates", Tag.TAG_COMPOUND);
+        for (int i = 0; i < plateList.size(); i++) {
+            data.plates.add(TectonicPlate.load(plateList.getCompound(i)));
+        }
+        ListTag disasterList = tag.getList("ActiveDisasters", Tag.TAG_COMPOUND);
+        for (int i = 0; i < disasterList.size(); i++) {
+            data.activeDisasters.add(DisasterInstance.load(disasterList.getCompound(i)));
+        }
+        return data;
+    }
+}
+```
+
+### 5.2 `ContinentMap.java`
+
+```java
+package com.horizonpack.horizonworld.data.planet;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntArrayTag;
+
+/**
+ * A 2D grid mapping (worldX, worldZ) → continentId (byte, -1 = ocean).
+ * Grid resolution: 1 cell = CELL_SIZE blocks (default 64).
+ */
+public class ContinentMap {
+    public static final int CELL_SIZE = 64;
+
+    private final int gridWidth;
+    private final int gridHeight;
+    private final byte[] cells; // -1=ocean, 0-126=continent index
+
+    public ContinentMap(int gridWidth, int gridHeight) {
+        this.gridWidth = gridWidth;
+        this.gridHeight = gridHeight;
+        this.cells = new byte[gridWidth * gridHeight];
+        java.util.Arrays.fill(cells, (byte) -1);
+    }
+
+    public byte getContinentAt(int blockX, int blockZ) {
+        int gx = Math.floorDiv(blockX, CELL_SIZE);
+        int gz = Math.floorDiv(blockZ, CELL_SIZE);
+        if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) return -1;
+        return cells[gz * gridWidth + gx];
+    }
+
+    public boolean isOcean(int blockX, int blockZ) {
+        return getContinentAt(blockX, blockZ) == -1;
+    }
+
+    public void setContinent(int gx, int gz, byte id) {
+        if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) return;
+        cells[gz * gridWidth + gx] = id;
+    }
+
+    public CompoundTag save() {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt("GridW", gridWidth);
+        tag.putInt("GridH", gridHeight);
+        int[] intCells = new int[cells.length];
+        for (int i = 0; i < cells.length; i++) intCells[i] = cells[i];
+        tag.put("Cells", new IntArrayTag(intCells));
+        return tag;
+    }
+
+    public static ContinentMap load(CompoundTag tag) {
+        int w = tag.getInt("GridW");
+        int h = tag.getInt("GridH");
+        ContinentMap map = new ContinentMap(w, h);
+        int[] intCells = tag.getIntArray("Cells");
+        for (int i = 0; i < intCells.length && i < map.cells.length; i++) {
+            map.cells[i] = (byte) intCells[i];
+        }
+        return map;
+    }
+}
+```
+
+---
+
+## 6. Custom Chunk Generator
+
+### 6.1 `HorizonChunkGenerator.java`
+
+```java
+package com.horizonpack.horizonworld.worldgen;
+
+import com.horizonpack.horizonworld.worldgen.passes.*;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.Holder;
+import net.minecraft.server.level.WorldGenRegion;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.NoiseColumn;
+import net.minecraft.world.level.StructureManager;
+import net.minecraft.world.level.biome.BiomeManager;
+import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.levelgen.GenerationStep;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.blending.Blender;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+public class HorizonChunkGenerator extends ChunkGenerator {
+
+    public static final MapCodec<HorizonChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+            BiomeSource.CODEC.fieldOf("biome_source").forGetter(HorizonChunkGenerator::getBiomeSource),
+            WorldGenSettings.CODEC.fieldOf("settings").forGetter(g -> g.settings)
+    ).apply(inst, HorizonChunkGenerator::new));
+
+    private final WorldGenSettings settings;
+
+    // Generation passes — order matters
+    private final ContinentMaskPass continentMaskPass;
+    private final ElevationPass elevationPass;
+    private final GeologyFillPass geologyFillPass;
+    private final SurfaceLayerPass surfaceLayerPass;
+    private final FeaturePlacementPass featurePlacementPass;
+
+    public HorizonChunkGenerator(BiomeSource biomeSource, WorldGenSettings settings) {
+        super(biomeSource);
+        this.settings = settings;
+        this.continentMaskPass  = new ContinentMaskPass(settings);
+        this.elevationPass      = new ElevationPass(settings);
+        this.geologyFillPass    = new GeologyFillPass(settings);
+        this.surfaceLayerPass   = new SurfaceLayerPass(settings);
+        this.featurePlacementPass = new FeaturePlacementPass(settings);
+    }
+
+    @Override
+    protected MapCodec<? extends ChunkGenerator> codec() { return CODEC; }
+
+    @Override
+    public CompletableFuture<ChunkAccess> fillFromNoise(
+            Blender blender, RandomState random, StructureManager structures, ChunkAccess chunk) {
+        return CompletableFuture.supplyAsync(() -> {
+            int[][] elevationMap = elevationPass.compute(chunk, random);
+            boolean[][] oceanMask = continentMaskPass.compute(chunk);
+            geologyFillPass.fill(chunk, elevationMap, oceanMask, random);
+            surfaceLayerPass.apply(chunk, elevationMap, oceanMask, random);
+            return chunk;
+        }, net.minecraft.Util.backgroundExecutor());
+    }
+
+    @Override
+    public void applyCarvers(WorldGenRegion region, long seed, RandomState random,
+                             BiomeManager biomes, StructureManager structures,
+                             ChunkAccess chunk, GenerationStep.Carving step) {
+        // HorizonWorld uses geological erosion carvers, not vanilla caves at this pass
+        // Cave generation is handled as a separate configured_feature
+    }
+
+    @Override
+    public void buildSurface(WorldGenRegion region, StructureManager structures,
+                             RandomState random, ChunkAccess chunk) {
+        // Surface already applied in fillFromNoise; this pass adds structure-aware overrides
+        surfaceLayerPass.applyStructureOverrides(region, chunk, random);
+    }
+
+    @Override
+    public void applyBiomeDecoration(WorldGenRegion region, ChunkAccess chunk,
+                                     StructureManager structures) {
+        featurePlacementPass.place(region, chunk, structures);
+    }
+
+    @Override
+    public int getBaseHeight(int x, int z, Heightmap.Types type,
+                             LevelHeightAccessor level, RandomState random) {
+        return elevationPass.getBaseHeight(x, z, random);
+    }
+
+    @Override
+    public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor level, RandomState random) {
+        int height = elevationPass.getBaseHeight(x, z, random);
+        BlockState[] states = new BlockState[level.getHeight()];
+        for (int y = 0; y < height; y++) {
+            states[y] = geologyFillPass.getSampleBlock(x, y, z, random);
+        }
+        return new NoiseColumn(level.getMinBuildHeight(), states);
+    }
+
+    @Override
+    public void addDebugScreenInfo(List<String> info, RandomState random, net.minecraft.core.BlockPos pos) {
+        info.add("Continent: " + continentMaskPass.getContinentName(pos.getX(), pos.getZ()));
+        info.add("Elevation: " + elevationPass.getBaseHeight(pos.getX(), pos.getZ(), random) + "m");
+    }
+
+    // Inner settings record
+    public record WorldGenSettings(
+            long continentSeed,
+            int continentCount,
+            float oceanFraction,
+            int seaLevel,
+            int worldHeight,
+            boolean enableVolcanism,
+            boolean enableRiftValleys
+    ) {
+        public static final MapCodec<WorldGenSettings> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+                com.mojang.serialization.Codec.LONG.fieldOf("continent_seed").forGetter(WorldGenSettings::continentSeed),
+                com.mojang.serialization.Codec.INT.fieldOf("continent_count").forGetter(WorldGenSettings::continentCount),
+                com.mojang.serialization.Codec.FLOAT.fieldOf("ocean_fraction").forGetter(WorldGenSettings::oceanFraction),
+                com.mojang.serialization.Codec.INT.fieldOf("sea_level").forGetter(WorldGenSettings::seaLevel),
+                com.mojang.serialization.Codec.INT.fieldOf("world_height").forGetter(WorldGenSettings::worldHeight),
+                com.mojang.serialization.Codec.BOOL.fieldOf("enable_volcanism").forGetter(WorldGenSettings::enableVolcanism),
+                com.mojang.serialization.Codec.BOOL.fieldOf("enable_rift_valleys").forGetter(WorldGenSettings::enableRiftValleys)
+        ).apply(inst, WorldGenSettings::new));
+    }
+}
+```
+
+### 6.2 `ElevationPass.java`
+
+```java
+package com.horizonpack.horizonworld.worldgen.passes;
+
+import com.horizonpack.horizonworld.worldgen.HorizonChunkGenerator.WorldGenSettings;
+import com.horizonpack.horizonworld.worldgen.noise.ElevationNoise;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.levelgen.RandomState;
+
+public class ElevationPass {
+    private final WorldGenSettings settings;
+    private final ElevationNoise noise;
+
+    public ElevationPass(WorldGenSettings settings) {
+        this.settings = settings;
+        this.noise = new ElevationNoise(settings.continentSeed());
+    }
+
+    /** Returns a 16×16 elevation array (block height) for the given chunk. */
+    public int[][] compute(ChunkAccess chunk, RandomState random) {
+        int[][] map = new int[16][16];
+        int baseX = chunk.getPos().getMinBlockX();
+        int baseZ = chunk.getPos().getMinBlockZ();
+        for (int dx = 0; dx < 16; dx++) {
+            for (int dz = 0; dz < 16; dz++) {
+                map[dx][dz] = sampleElevation(baseX + dx, baseZ + dz);
+            }
+        }
+        return map;
+    }
+
+    public int getBaseHeight(int x, int z, RandomState random) {
+        return sampleElevation(x, z);
+    }
+
+    private int sampleElevation(int x, int z) {
+        double raw = noise.sample(x, z); // −1.0 → 1.0
+        // Map to block height: sea level ± half world height
+        int seaLevel = settings.seaLevel();
+        int halfHeight = settings.worldHeight() / 2;
+        return (int) (seaLevel + raw * halfHeight);
+    }
+}
+```
+
+### 6.3 `GeologyFillPass.java`
+
+```java
+package com.horizonpack.horizonworld.worldgen.passes;
+
+import com.horizonpack.horizonworld.core.HorizonWorld;
+import com.horizonpack.horizonworld.data.planet.GeologyProfile;
+import com.horizonpack.horizonworld.data.planet.PlanetData;
+import com.horizonpack.horizonworld.worldgen.HorizonChunkGenerator.WorldGenSettings;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.levelgen.RandomState;
+
+public class GeologyFillPass {
+    private final WorldGenSettings settings;
+
+    public GeologyFillPass(WorldGenSettings settings) { this.settings = settings; }
+
+    public void fill(ChunkAccess chunk, int[][] elevationMap, boolean[][] oceanMask, RandomState random) {
+        int baseX = chunk.getPos().getMinBlockX();
+        int baseZ = chunk.getPos().getMinBlockZ();
+        int minY  = chunk.getMinBuildHeight();
+
+        for (int dx = 0; dx < 16; dx++) {
+            for (int dz = 0; dz < 16; dz++) {
+                int worldX = baseX + dx;
+                int worldZ = baseZ + dz;
+                int surfaceY = elevationMap[dx][dz];
+                boolean ocean = oceanMask[dx][dz];
+
+                // Fill bedrock at bottom
+                chunk.setBlockState(new BlockPos(worldX, minY, worldZ), Blocks.BEDROCK.defaultBlockState(), false);
+
+                if (ocean) {
+                    fillOceanColumn(chunk, worldX, worldZ, surfaceY, minY + 1);
+                } else {
+                    // TODO: look up GeologyProfile from PlanetData and use strata layers
+                    fillDefaultLandColumn(chunk, worldX, worldZ, surfaceY, minY + 1, random);
+                }
+            }
+        }
+    }
+
+    private void fillOceanColumn(ChunkAccess chunk, int x, int z, int seaBed, int minY) {
+        for (int y = minY; y <= seaBed; y++) {
+            chunk.setBlockState(new BlockPos(x, y, z),
+                    y < seaBed - 3 ? Blocks.STONE.defaultBlockState() : Blocks.GRAVEL.defaultBlockState(), false);
+        }
+        // Fill water above seabed up to sea level
+        for (int y = seaBed + 1; y <= settings.seaLevel(); y++) {
+            chunk.setBlockState(new BlockPos(x, y, z), Blocks.WATER.defaultBlockState(), false);
+        }
+    }
+
+    private void fillDefaultLandColumn(ChunkAccess chunk, int x, int z, int surfaceY, int minY, RandomState random) {
+        for (int y = minY; y <= surfaceY; y++) {
+            double depthFraction = (double)(surfaceY - y) / (surfaceY - minY);
+            BlockState state;
+            if (depthFraction > 0.8) {
+                state = Blocks.DEEPSLATE.defaultBlockState();
+            } else if (depthFraction > 0.5) {
+                state = Blocks.STONE.defaultBlockState();
+            } else if (depthFraction > 0.15) {
+                state = Blocks.STONE.defaultBlockState(); // replaced by geology profile in production
+            } else {
+                state = Blocks.STONE.defaultBlockState();
+            }
+            chunk.setBlockState(new BlockPos(x, y, z), state, false);
+        }
+    }
+
+    public BlockState getSampleBlock(int x, int y, int z, RandomState random) {
+        return Blocks.STONE.defaultBlockState();
+    }
+}
+```
+
+---
+
+## 7. Climate Zone System
+
+### 7.1 `ClimateZone.java`
+
+```java
+package com.horizonpack.horizonworld.data.climate;
+
+import com.mojang.serialization.Codec;
+
+/**
+ * Koppen-derived climate classification used for biome assignment
+ * and weather probability weights.
+ */
+public enum ClimateZone {
+    /** 0–23° latitude: high temp, high rainfall year-round */
+    TROPICAL(28f, 32f, 0.8f, 0.9f),
+    /** Desert/steppe: low rainfall, high temp variation */
+    ARID(15f, 40f, 0.05f, 0.2f),
+    /** Moderate temp and rainfall, four seasons */
+    TEMPERATE(5f, 25f, 0.4f, 0.6f),
+    /** Cold winters, warm summers, moderate rain */
+    CONTINENTAL(-10f, 22f, 0.35f, 0.55f),
+    /** Near poles: extreme cold, low precipitation */
+    POLAR(-40f, 0f, 0.1f, 0.3f);
+
+    public final float minTemp;   // °C minimum seasonal
+    public final float maxTemp;   // °C maximum seasonal
+    public final float minPrecip; // fraction of days with precipitation (low season)
+    public final float maxPrecip; // fraction of days with precipitation (high season)
+
+    ClimateZone(float minTemp, float maxTemp, float minPrecip, float maxPrecip) {
+        this.minTemp   = minTemp;
+        this.maxTemp   = maxTemp;
+        this.minPrecip = minPrecip;
+        this.maxPrecip = maxPrecip;
+    }
+
+    public static final Codec<ClimateZone> CODEC =
+        Codec.STRING.xmap(ClimateZone::valueOf, ClimateZone::name);
+
+    /** Latitude in degrees (0=equator, 90=pole) → zone */
+    public static ClimateZone fromLatitude(float latitude) {
+        float abs = Math.abs(latitude);
+        if (abs < 23f)  return TROPICAL;
+        if (abs < 35f)  return ARID;
+        if (abs < 55f)  return TEMPERATE;
+        if (abs < 70f)  return CONTINENTAL;
+        return POLAR;
+    }
+}
+```
+
+### 7.2 `ClimateSnapshot.java`
+
+```java
+package com.horizonpack.horizonworld.data.climate;
+
+/**
+ * Computed once per (chunk, season) and cached.
+ * Handed to other mods via ClimateEngine.getSnapshot(BlockPos).
+ */
+public record ClimateSnapshot(
+        ClimateZone zone,
+        float temperature,    // current °C (season-adjusted)
+        float humidity,       // 0.0–1.0
+        float precipitation,  // 0.0–1.0 probability per hour
+        float windSpeed,      // 0–120 km/h
+        float solarIntensity, // 0.0–1.0 (affects crop growth, solar power)
+        int elevationMetres   // above sea level
+) {
+    public boolean isFreezing() { return temperature <= 0f; }
+    public boolean isHot()      { return temperature >= 35f; }
+    public boolean isDry()      { return humidity < 0.2f; }
+}
+```
+
+### 7.3 `ClimateEngine.java`
+
+```java
+package com.horizonpack.horizonworld.systems;
+
+import com.horizonpack.horizonworld.data.climate.ClimateSnapshot;
+import com.horizonpack.horizonworld.data.climate.ClimateZone;
+import com.horizonpack.horizonworld.data.climate.Season;
+import com.horizonpack.horizonworld.utils.ClimateCache;
+import com.horizonpack.horizonworld.utils.LatLonUtil;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+
+public final class ClimateEngine {
+    private ClimateEngine() {}
+
+    private static ClimateCache cache;
+
+    public static void init() {
+        cache = new ClimateCache(4096); // LRU of 4096 chunk entries
+    }
+
+    /**
+     * Primary API called by other mods.
+     * Thread-safe: cache is synchronized; computation is pure.
+     */
+    public static ClimateSnapshot getSnapshot(ServerLevel level, BlockPos pos) {
+        long key = (long)(pos.getX() >> 4) << 32 | (pos.getZ() >> 4 & 0xFFFFFFFFL);
+        ClimateSnapshot cached = cache.get(key);
+        if (cached != null) return cached;
+
+        ClimateSnapshot computed = compute(level, pos);
+        cache.put(key, computed);
+        return computed;
+    }
+
+    /** Invalidate cache for a chunk (called on season change or disaster). */
+    public static void invalidateChunk(int chunkX, int chunkZ) {
+        long key = (long)chunkX << 32 | (chunkZ & 0xFFFFFFFFL);
+        cache.remove(key);
+    }
+
+    /** Invalidate all cached snapshots (season transition). */
+    public static void invalidateAll() {
+        cache.clear();
+    }
+
+    private static ClimateSnapshot compute(ServerLevel level, BlockPos pos) {
+        float[] latLon   = LatLonUtil.toLatLon(level, pos);
+        ClimateZone zone = ClimateZone.fromLatitude(latLon[0]);
+        Season season    = SeasonEngine.getCurrentSeason(level);
+
+        float tempBase   = (zone.minTemp + zone.maxTemp) / 2f;
+        float seasonOffset = switch (season) {
+            case SUMMER -> (zone.maxTemp - tempBase) * 0.8f;
+            case WINTER -> (zone.minTemp - tempBase) * 0.8f;
+            default     -> 0f;
+        };
+        float temp = tempBase + seasonOffset;
+
+        // Altitude cooling: −6.5°C per 1000m
+        int elevMetres = Math.max(0, pos.getY() - 63) * 4; // approximate
+        temp -= (elevMetres / 1000f) * 6.5f;
+
+        float precipFraction = (zone.minPrecip + zone.maxPrecip) / 2f;
+        float humidity = precipFraction * 1.2f;
+
+        return new ClimateSnapshot(zone, temp, Math.min(1f, humidity),
+                precipFraction, 20f, 0.8f, elevMetres);
+    }
+}
+```
+
+---
+
+## 8. Weather Engine
+
+### 8.1 `WeatherType.java`
+
+```java
+package com.horizonpack.horizonworld.data.climate;
+
+import com.mojang.serialization.Codec;
+
+public enum WeatherType {
+    CLEAR,
+    LIGHT_RAIN,
+    HEAVY_RAIN,
+    THUNDERSTORM,
+    SNOW,
+    BLIZZARD,
+    HAIL,
+    FOG,
+    HURRICANE,
+    TORNADO,
+    MONSOON,
+    DUST_STORM,
+    VOLCANIC_ASH_FALL; // triggered by active volcanic disaster
+
+    public static final Codec<WeatherType> CODEC =
+        Codec.STRING.xmap(WeatherType::valueOf, WeatherType::name);
+
+    public boolean isPrecipitation() {
+        return this == LIGHT_RAIN || this == HEAVY_RAIN || this == THUNDERSTORM
+            || this == SNOW || this == BLIZZARD || this == HAIL || this == MONSOON;
+    }
+
+    public boolean isDangerous() {
+        return this == HURRICANE || this == TORNADO || this == BLIZZARD || this == HAIL;
+    }
+}
+```
+
+### 8.2 `WeatherState.java`
+
+```java
+package com.horizonpack.horizonworld.data.climate;
+
+import net.minecraft.nbt.CompoundTag;
+
+/**
+ * Mutable weather state for one dimension.
+ * Stored in SeasonData; updated by WeatherEngine every in-game hour.
+ */
+public class WeatherState {
+    private WeatherType current = WeatherType.CLEAR;
+    private WeatherType queued  = null;
+    private int ticksRemaining  = 0;       // ticks at current weather
+    private int transitionTicks = 0;       // ticks until queued takes effect
+    private float intensity     = 1.0f;    // 0.0–1.0 modifier on particle density/damage
+
+    public WeatherType getCurrent()  { return current; }
+    public float getIntensity()      { return intensity; }
+    public boolean isTransitioning() { return transitionTicks > 0; }
+
+    public void tick() {
+        if (transitionTicks > 0) {
+            transitionTicks--;
+            if (transitionTicks == 0 && queued != null) {
+                current = queued;
+                queued  = null;
+            }
+        } else if (ticksRemaining > 0) {
+            ticksRemaining--;
+        }
+        // WeatherEngine.tick() replaces when ticksRemaining hits 0
+    }
+
+    public boolean needsNewWeather() { return ticksRemaining <= 0 && !isTransitioning(); }
+
+    public void setWeather(WeatherType type, int durationTicks, int transitionTicks, float intensity) {
+        this.queued           = type;
+        this.transitionTicks  = transitionTicks;
+        this.ticksRemaining   = durationTicks;
+        this.intensity        = intensity;
+    }
+
+    // --- NBT ---
+    public void save(CompoundTag tag) {
+        tag.putString("Current", current.name());
+        if (queued != null) tag.putString("Queued", queued.name());
+        tag.putInt("TicksRemaining", ticksRemaining);
+        tag.putInt("TransitionTicks", transitionTicks);
+        tag.putFloat("Intensity", intensity);
+    }
+
+    public void load(CompoundTag tag) {
+        current         = WeatherType.valueOf(tag.getString("Current"));
+        queued          = tag.contains("Queued") ? WeatherType.valueOf(tag.getString("Queued")) : null;
+        ticksRemaining  = tag.getInt("TicksRemaining");
+        transitionTicks = tag.getInt("TransitionTicks");
+        intensity       = tag.getFloat("Intensity");
+    }
+}
+```
+
+### 8.3 `WeatherEngine.java`
+
+```java
+package com.horizonpack.horizonworld.systems;
+
+import com.horizonpack.horizonworld.data.climate.*;
+import com.horizonpack.horizonworld.events.custom.WeatherChangeEvent;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.neoforge.common.NeoForge;
+
+import java.util.Random;
+
+public final class WeatherEngine {
+    private WeatherEngine() {}
+
+    /**
+     * Called every server tick by WorldEventHandlers.
+     * Only processes every 20 ticks (once per second) for performance.
+     */
+    private static int tickAccum = 0;
+
+    public static void tick(ServerLevel level, WeatherState state) {
+        state.tick();
+        tickAccum++;
+        if (tickAccum < 20) return;
+        tickAccum = 0;
+
+        if (state.needsNewWeather()) {
+            WeatherType next = selectNextWeather(level, state);
+            int duration    = computeDuration(next);
+            int transition  = 40; // 2 seconds cross-fade
+            float intensity = computeIntensity(level, next);
+
+            WeatherType prev = state.getCurrent();
+            state.setWeather(next, duration, transition, intensity);
+
+            if (prev != next) {
+                NeoForge.EVENT_BUS.post(new WeatherChangeEvent(level, prev, next));
+            }
+        }
+    }
+
+    private static WeatherType selectNextWeather(ServerLevel level, WeatherState current) {
+        // Get climate at world origin as a representative sample
+        ClimateSnapshot snap = ClimateEngine.getSnapshot(level, net.minecraft.core.BlockPos.ZERO);
+        Season season = SeasonEngine.getCurrentSeason(level);
+        Random rand = new Random(level.getGameTime());
+
+        return switch (snap.zone()) {
+            case TROPICAL  -> selectTropical(season, rand, snap);
+            case ARID      -> selectArid(season, rand, snap);
+            case TEMPERATE -> selectTemperate(season, rand, snap);
+            case CONTINENTAL -> selectContinental(season, rand, snap);
+            case POLAR     -> selectPolar(season, rand, snap);
+        };
+    }
+
+    private static WeatherType selectTropical(Season s, Random r, ClimateSnapshot snap) {
+        float roll = r.nextFloat();
+        if (s == Season.SUMMER || s == Season.AUTUMN) {
+            if (roll < 0.05f) return WeatherType.HURRICANE;
+            if (roll < 0.25f) return WeatherType.MONSOON;
+            if (roll < 0.55f) return WeatherType.HEAVY_RAIN;
+            if (roll < 0.70f) return WeatherType.THUNDERSTORM;
+            return WeatherType.CLEAR;
+        } else {
+            if (roll < 0.35f) return WeatherType.LIGHT_RAIN;
+            if (roll < 0.50f) return WeatherType.HEAVY_RAIN;
+            return WeatherType.CLEAR;
+        }
+    }
+
+    private static WeatherType selectArid(Season s, Random r, ClimateSnapshot snap) {
+        float roll = r.nextFloat();
+        if (roll < 0.10f) return WeatherType.DUST_STORM;
+        if (roll < 0.15f) return WeatherType.LIGHT_RAIN;
+        if (roll < 0.17f) return WeatherType.THUNDERSTORM;
+        return WeatherType.CLEAR;
+    }
+
+    private static WeatherType selectTemperate(Season s, Random r, ClimateSnapshot snap) {
+        float roll = r.nextFloat();
+        return switch (s) {
+            case SPRING -> roll < 0.40f ? WeatherType.LIGHT_RAIN
+                         : roll < 0.55f ? WeatherType.HEAVY_RAIN
+                         : roll < 0.60f ? WeatherType.THUNDERSTORM
+                         : WeatherType.CLEAR;
+            case SUMMER -> roll < 0.20f ? WeatherType.LIGHT_RAIN
+                         : roll < 0.30f ? WeatherType.THUNDERSTORM
+                         : roll < 0.32f ? WeatherType.TORNADO
+                         : WeatherType.CLEAR;
+            case AUTUMN -> roll < 0.45f ? WeatherType.LIGHT_RAIN
+                         : roll < 0.55f ? WeatherType.FOG
+                         : WeatherType.CLEAR;
+            case WINTER -> roll < 0.35f ? WeatherType.SNOW
+                         : roll < 0.45f ? WeatherType.BLIZZARD
+                         : roll < 0.50f ? WeatherType.FOG
+                         : WeatherType.CLEAR;
+        };
+    }
+
+    private static WeatherType selectContinental(Season s, Random r, ClimateSnapshot snap) {
+        float roll = r.nextFloat();
+        return switch (s) {
+            case WINTER -> roll < 0.50f ? WeatherType.BLIZZARD
+                         : roll < 0.65f ? WeatherType.SNOW
+                         : WeatherType.CLEAR;
+            case SUMMER -> roll < 0.25f ? WeatherType.HEAVY_RAIN
+                         : roll < 0.35f ? WeatherType.THUNDERSTORM
+                         : WeatherType.CLEAR;
+            default     -> roll < 0.30f ? WeatherType.LIGHT_RAIN : WeatherType.CLEAR;
+        };
+    }
+
+    private static WeatherType selectPolar(Season s, Random r, ClimateSnapshot snap) {
+        float roll = r.nextFloat();
+        return roll < 0.60f ? WeatherType.BLIZZARD
+             : roll < 0.75f ? WeatherType.SNOW
+             : WeatherType.CLEAR;
+    }
+
+    private static int computeDuration(WeatherType type) {
+        return switch (type) {
+            case CLEAR      -> 6000 + (int)(Math.random() * 12000); // 5–15 min
+            case LIGHT_RAIN -> 2400 + (int)(Math.random() * 4800);
+            case HEAVY_RAIN, MONSOON -> 3600 + (int)(Math.random() * 3600);
+            case THUNDERSTORM -> 1200 + (int)(Math.random() * 2400);
+            case SNOW, FOG   -> 4800 + (int)(Math.random() * 9600);
+            case BLIZZARD    -> 6000 + (int)(Math.random() * 6000);
+            case HURRICANE, TORNADO -> 600 + (int)(Math.random() * 1200);
+            case HAIL        -> 400  + (int)(Math.random() * 800);
+            case DUST_STORM  -> 2400 + (int)(Math.random() * 4800);
+            case VOLCANIC_ASH_FALL -> 12000; // driven by disaster, not duration
+        };
+    }
+
+    private static float computeIntensity(ServerLevel level, WeatherType type) {
+        return 0.5f + (float)Math.random() * 0.5f;
+    }
+}
+```
+
+---
+
+## 9. Season System
+
+### 9.1 `Season.java`
+
+```java
+package com.horizonpack.horizonworld.data.climate;
+
+import com.mojang.serialization.Codec;
+
+public enum Season {
+    SPRING(0, "Spring", 1.2f, 0.5f),
+    SUMMER(1, "Summer", 1.5f, 0.3f),
+    AUTUMN(2, "Autumn", 0.8f, 0.4f),
+    WINTER(3, "Winter", 0.0f, 0.7f);
+
+    public final int index;
+    public final String displayName;
+    /** Crop growth rate multiplier */
+    public final float cropGrowthMultiplier;
+    /** Fraction of days with precipitation */
+    public final float precipitationBase;
+
+    Season(int index, String displayName, float cropGrowth, float precipBase) {
+        this.index = index;
+        this.displayName = displayName;
+        this.cropGrowthMultiplier = cropGrowth;
+        this.precipitationBase = precipBase;
+    }
+
+    public static final Codec<Season> CODEC =
+        Codec.STRING.xmap(Season::valueOf, Season::name);
+
+    public Season next() {
+        return values()[(index + 1) % 4];
+    }
+}
+```
+
+### 9.2 `SeasonData.java` (SavedData)
+
+```java
+package com.horizonpack.horizonworld.data.climate;
+
+import com.horizonpack.horizonworld.events.custom.SeasonChangeEvent;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import net.neoforged.neoforge.common.NeoForge;
+
+public class SeasonData extends SavedData {
+    public static final String KEY = "horizonworld_season";
+    public static final int DAYS_PER_SEASON = 30; // configurable
+
+    private Season currentSeason = Season.SPRING;
+    private int dayInSeason = 0;
+    private WeatherState weatherState = new WeatherState();
+
+    public static SeasonData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new Factory<>(SeasonData::new, SeasonData::load), KEY);
+    }
+
+    public Season getCurrentSeason() { return currentSeason; }
+    public int getDayInSeason()      { return dayInSeason; }
+    public WeatherState getWeatherState() { return weatherState; }
+
+    /** Called by WorldEventHandlers on DayAdvanceEvent. */
+    public void advanceDay(ServerLevel level) {
+        dayInSeason++;
+        if (dayInSeason >= DAYS_PER_SEASON) {
+            dayInSeason = 0;
+            Season prev = currentSeason;
+            currentSeason = currentSeason.next();
+            ClimateEngine.invalidateAll();
+            NeoForge.EVENT_BUS.post(new SeasonChangeEvent(level, prev, currentSeason));
+        }
+        setDirty();
+    }
+
+    @Override
+    public CompoundTag save(CompoundTag tag) {
+        tag.putString("Season", currentSeason.name());
+        tag.putInt("DayInSeason", dayInSeason);
+        CompoundTag weatherTag = new CompoundTag();
+        weatherState.save(weatherTag);
+        tag.put("Weather", weatherTag);
+        return tag;
+    }
+
+    private static SeasonData load(CompoundTag tag) {
+        SeasonData data = new SeasonData();
+        data.currentSeason = Season.valueOf(tag.getString("Season"));
+        data.dayInSeason   = tag.getInt("DayInSeason");
+        if (tag.contains("Weather")) data.weatherState.load(tag.getCompound("Weather"));
+        return data;
+    }
+}
+```
+
+### 9.3 `SeasonEngine.java`
+
+```java
+package com.horizonpack.horizonworld.systems;
+
+import com.horizonpack.horizonworld.data.climate.Season;
+import com.horizonpack.horizonworld.data.climate.SeasonData;
+import net.minecraft.server.level.ServerLevel;
+
+public final class SeasonEngine {
+    private SeasonEngine() {}
+
+    public static Season getCurrentSeason(ServerLevel level) {
+        return SeasonData.get(level).getCurrentSeason();
+    }
+
+    public static int getDayInSeason(ServerLevel level) {
+        return SeasonData.get(level).getDayInSeason();
+    }
+
+    /** Returns 0.0–1.0 progress through current season. */
+    public static float getSeasonProgress(ServerLevel level) {
+        return (float) getDayInSeason(level) / SeasonData.DAYS_PER_SEASON;
+    }
+
+    /**
+     * Called once per in-game day by WorldEventHandlers listening to DayAdvanceEvent.
+     */
+    public static void onDayAdvance(ServerLevel level) {
+        SeasonData data = SeasonData.get(level);
+        data.advanceDay(level);
+    }
+}
+```
+
+---
+
+## 10. Natural Disaster System
+
+### 10.1 `DisasterType.java`
+
+```java
+package com.horizonpack.horizonworld.data.disaster;
+
+import com.mojang.serialization.Codec;
+
+public enum DisasterType {
+    EARTHQUAKE(true, false, 800),
+    VOLCANIC_ERUPTION(true, true, 1200),
+    TSUNAMI(false, false, 600),
+    FLOOD(false, false, 400),
+    DROUGHT(false, false, 200),
+    WILDFIRE(false, false, 300),
+    AVALANCHE(false, false, 150),
+    LANDSLIDE(false, false, 200),
+    HURRICANE_LANDFALL(false, false, 1000);
+
+    /** Whether tectonic stress must be above threshold */
+    public final boolean requiresTectonicStress;
+    /** Whether an active volcanic vent must be present nearby */
+    public final boolean requiresVolcanicVent;
+    /** Base block-radius of effect at peak */
+    public final int effectRadius;
+
+    DisasterType(boolean tectonic, boolean volcanic, int radius) {
+        this.requiresTectonicStress = tectonic;
+        this.requiresVolcanicVent   = volcanic;
+        this.effectRadius           = radius;
+    }
+
+    public static final Codec<DisasterType> CODEC =
+        Codec.STRING.xmap(DisasterType::valueOf, DisasterType::name);
+}
+```
+
+### 10.2 `DisasterInstance.java`
+
+```java
+package com.horizonpack.horizonworld.data.disaster;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+
+import java.util.UUID;
+
+public class DisasterInstance {
+    private final UUID id;
+    private final DisasterType type;
+    private BlockPos epicenter;
+    private DisasterPhase phase;
+    private int ticksInPhase;
+    private float severity; // 0.0–1.0
+
+    public DisasterInstance(DisasterType type, BlockPos epicenter, float severity) {
+        this.id         = UUID.randomUUID();
+        this.type       = type;
+        this.epicenter  = epicenter;
+        this.phase      = DisasterPhase.PRECURSOR;
+        this.ticksInPhase = 0;
+        this.severity   = severity;
+    }
+
+    public UUID id()           { return id; }
+    public DisasterType type() { return type; }
+    public BlockPos epicenter(){ return epicenter; }
+    public DisasterPhase phase(){ return phase; }
+    public float severity()    { return severity; }
+
+    public void advancePhase() {
+        phase = phase.next();
+        ticksInPhase = 0;
+    }
+
+    public void tick() { ticksInPhase++; }
+    public int ticksInPhase() { return ticksInPhase; }
+
+    public boolean isFinished() { return phase == DisasterPhase.FINISHED; }
+
+    // --- Persistence ---
+    public CompoundTag save() {
+        CompoundTag tag = new CompoundTag();
+        tag.putUUID("Id", id);
+        tag.putString("Type", type.name());
+        tag.putInt("EpicenterX", epicenter.getX());
+        tag.putInt("EpicenterY", epicenter.getY());
+        tag.putInt("EpicenterZ", epicenter.getZ());
+        tag.putString("Phase", phase.name());
+        tag.putInt("TicksInPhase", ticksInPhase);
+        tag.putFloat("Severity", severity);
+        return tag;
+    }
+
+    public static DisasterInstance load(CompoundTag tag) {
+        DisasterInstance d = new DisasterInstance(
+            DisasterType.valueOf(tag.getString("Type")),
+            new BlockPos(tag.getInt("EpicenterX"), tag.getInt("EpicenterY"), tag.getInt("EpicenterZ")),
+            tag.getFloat("Severity"));
+        d.phase       = DisasterPhase.valueOf(tag.getString("Phase"));
+        d.ticksInPhase = tag.getInt("TicksInPhase");
+        return d;
+    }
+}
+```
+
+### 10.3 `DisasterPhase.java`
+
+```java
+package com.horizonpack.horizonworld.data.disaster;
+
+public enum DisasterPhase {
+    PRECURSOR,  // Warnings, rumbles, rising water — no damage yet
+    ACTIVE,     // Building intensity
+    PEAK,       // Maximum destruction
+    WANING,     // Tapering off
+    AFTERMATH,  // Cleanup blocks, effect blocks placed
+    FINISHED;   // Removed from active list
+
+    public DisasterPhase next() {
+        DisasterPhase[] v = values();
+        return v[Math.min(ordinal() + 1, v.length - 1)];
+    }
+}
+```
+
+### 10.4 `DisasterEngine.java`
+
+```java
+package com.horizonpack.horizonworld.systems;
+
+import com.horizonpack.horizonworld.core.WorldConfig;
+import com.horizonpack.horizonworld.data.disaster.*;
+import com.horizonpack.horizonworld.data.planet.PlanetData;
+import com.horizonpack.horizonworld.data.planet.TectonicPlate;
+import com.horizonpack.horizonworld.events.custom.*;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
+import net.neoforged.neoforge.common.NeoForge;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+public final class DisasterEngine {
+    private DisasterEngine() {}
+
+    // Ticks per disaster check (every 10 seconds)
+    private static final int CHECK_INTERVAL = 200;
+    private static int tickAccum = 0;
+
+    public static void tick(ServerLevel level) {
+        PlanetData planet = PlanetData.get(level);
+
+        // Tick existing disasters
+        List<DisasterInstance> toRemove = new ArrayList<>();
+        for (DisasterInstance disaster : planet.activeDisasters()) {
+            disaster.tick();
+            tickDisaster(level, disaster, planet);
+            if (disaster.isFinished()) toRemove.add(disaster);
+        }
+        toRemove.forEach(planet::removeDisaster);
+
+        // Check for new disasters
+        tickAccum++;
+        if (tickAccum >= CHECK_INTERVAL) {
+            tickAccum = 0;
+            maybeSpawnDisaster(level, planet);
+        }
+    }
+
+    private static void tickDisaster(ServerLevel level, DisasterInstance d, PlanetData planet) {
+        int phaseDuration = getPhaseDuration(d);
+        if (d.ticksInPhase() >= phaseDuration) {
+            DisasterPhase prev = d.phase();
+            d.advancePhase();
+            NeoForge.EVENT_BUS.post(new DisasterPhaseEvent(level, d, prev, d.phase()));
+
+            if (d.phase() == DisasterPhase.FINISHED) {
+                NeoForge.EVENT_BUS.post(new DisasterEndEvent(level, d));
+            } else if (d.phase() == DisasterPhase.AFTERMATH) {
+                applyAftermath(level, d);
+            }
+        }
+
+        // Apply per-tick effects at PEAK
+        if (d.phase() == DisasterPhase.PEAK) {
+            applyPeakEffects(level, d);
+        }
+    }
+
+    private static int getPhaseDuration(DisasterInstance d) {
+        return switch (d.phase()) {
+            case PRECURSOR -> 1200;  // 1 minute warning
+            case ACTIVE    -> 600;
+            case PEAK      -> 1200;
+            case WANING    -> 600;
+            case AFTERMATH -> 2400;
+            default        -> 0;
+        };
+    }
+
+    private static void applyPeakEffects(ServerLevel level, DisasterInstance d) {
+        Random rand = new Random(level.getGameTime() + d.id().getMostSignificantBits());
+        int radius = (int)(d.type().effectRadius * d.severity());
+
+        switch (d.type()) {
+            case EARTHQUAKE -> applyEarthquakeEffects(level, d.epicenter(), radius, rand);
+            case VOLCANIC_ERUPTION -> applyVolcanicEffects(level, d.epicenter(), radius, rand);
+            case WILDFIRE    -> applyWildfireEffects(level, d.epicenter(), radius, rand);
+            case FLOOD       -> applyFloodEffects(level, d.epicenter(), radius, rand);
+            default -> {} // Complex disasters handled in their own engine methods
+        }
+    }
+
+    private static void applyEarthquakeEffects(ServerLevel level, BlockPos epicenter, int radius, Random rand) {
+        // Sample a small number of blocks per tick to avoid lag
+        for (int i = 0; i < 5; i++) {
+            int dx = rand.nextInt(radius * 2) - radius;
+            int dz = rand.nextInt(radius * 2) - radius;
+            int dist = (int)Math.sqrt(dx*dx + dz*dz);
+            if (dist > radius) continue;
+
+            BlockPos surface = level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                epicenter.offset(dx, 0, dz));
+
+            // Chance to collapse surface blocks
+            float collapseProbability = 1f - ((float)dist / radius);
+            if (rand.nextFloat() < collapseProbability * 0.05f) {
+                if (!level.getBlockState(surface).isAir()) {
+                    level.setBlock(surface, Blocks.AIR.defaultBlockState(), 3);
+                    level.setBlock(surface.below(), Blocks.GRAVEL.defaultBlockState(), 3);
+                }
+            }
+        }
+    }
+
+    private static void applyVolcanicEffects(ServerLevel level, BlockPos epicenter, int radius, Random rand) {
+        for (int i = 0; i < 3; i++) {
+            double angle  = rand.nextDouble() * Math.PI * 2;
+            double dist   = rand.nextDouble() * radius;
+            int tx = epicenter.getX() + (int)(Math.cos(angle) * dist);
+            int tz = epicenter.getZ() + (int)(Math.sin(angle) * dist);
+            BlockPos surface = level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                new BlockPos(tx, epicenter.getY(), tz));
+            level.setBlock(surface, Blocks.MAGMA_BLOCK.defaultBlockState(), 3);
+        }
+    }
+
+    private static void applyWildfireEffects(ServerLevel level, BlockPos epicenter, int radius, Random rand) {
+        for (int i = 0; i < 8; i++) {
+            int dx = rand.nextInt(radius * 2) - radius;
+            int dz = rand.nextInt(radius * 2) - radius;
+            BlockPos surface = level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                epicenter.offset(dx, 0, dz)).above();
+            if (level.getBlockState(surface.below()).isFlammable(level, surface.below(), net.minecraft.core.Direction.UP)) {
+                level.setBlock(surface, Blocks.FIRE.defaultBlockState(), 3);
+            }
+        }
+    }
+
+    private static void applyFloodEffects(ServerLevel level, BlockPos epicenter, int radius, Random rand) {
+        for (int i = 0; i < 10; i++) {
+            int dx = rand.nextInt(radius * 2) - radius;
+            int dz = rand.nextInt(radius * 2) - radius;
+            BlockPos surface = level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,
+                epicenter.offset(dx, 0, dz));
+            if (level.getBlockState(surface).isAir()) {
+                level.setBlock(surface, Blocks.WATER.defaultBlockState(), 3);
+            }
+        }
+    }
+
+    private static void applyAftermath(ServerLevel level, DisasterInstance d) {
+        // Place aftermath blocks: scorched earth, silt, debris
+        // Implementation replaces PEAK-affected blocks with aftermath variants
+    }
+
+    private static void maybeSpawnDisaster(ServerLevel level, PlanetData planet) {
+        if (!WorldConfig.COMMON.enableDisasters.get()) return;
+        if (planet.activeDisasters().size() >= WorldConfig.COMMON.maxSimultaneousDisasters.get()) return;
+
+        Random rand = new Random(level.getGameTime());
+        float roll = rand.nextFloat();
+        float freq = WorldConfig.COMMON.disasterFrequency.get().floatValue();
+
+        // Earthquake: driven by tectonic stress
+        for (TectonicPlate plate : planet.plates()) {
+            if (plate.stress() > 0.8f && rand.nextFloat() < freq * 0.05f) {
+                BlockPos epicenter = choosePlateBoundaryEpicenter(plate, rand);
+                DisasterInstance quake = new DisasterInstance(
+                    DisasterType.EARTHQUAKE, epicenter, plate.stress());
+                boolean cancelled = NeoForge.EVENT_BUS.post(new DisasterStartEvent(level, quake)).isCanceled();
+                if (!cancelled) {
+                    planet.addDisaster(quake);
+                    plate.releaseStress(0.6f);
+                }
+            }
+        }
+
+        // Wildfire: driven by drought + temperature
+        if (roll < freq * 0.02f) {
+            ClimateSnapshot snap = ClimateEngine.getSnapshot(level, BlockPos.ZERO);
+            if (snap.isDry() && snap.isHot()) {
+                BlockPos epicenter = new BlockPos(
+                    rand.nextInt(10000) - 5000, 64, rand.nextInt(10000) - 5000);
+                DisasterInstance fire = new DisasterInstance(
+                    DisasterType.WILDFIRE, epicenter, snap.temperature() / 50f);
+                if (!NeoForge.EVENT_BUS.post(new DisasterStartEvent(level, fire)).isCanceled()) {
+                    planet.addDisaster(fire);
+                }
+            }
+        }
+    }
+
+    private static BlockPos choosePlateBoundaryEpicenter(TectonicPlate plate, Random rand) {
+        var boundaries = plate.boundaries();
+        if (boundaries.isEmpty()) return BlockPos.ZERO;
+        var boundary = boundaries.get(rand.nextInt(boundaries.size()));
+        int[] xs = boundary.epicenterX();
+        int[] zs = boundary.epicenterZ();
+        int i = rand.nextInt(xs.length);
+        return new BlockPos(xs[i], 64, zs[i]);
+    }
+}
+```
+
+---
+
+## 11. Ecosystem & Biome Ecology
+
+### 11.1 `EcologyProfile.java`
+
+```java
+package com.horizonpack.horizonworld.data.ecology;
+
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.resources.ResourceLocation;
+
+/**
+ * Tracks ecological balance for one biome instance (per chunk cluster).
+ * HorizonBiome reads this to drive spawn rates and flora density.
+ */
+public record EcologyProfile(
+        ResourceLocation biomeId,
+        float predatorCount,    // normalized 0–1
+        float preyCount,        // normalized 0–1
+        float plantBiomass,     // normalized 0–1
+        float soilHealth,       // 0–1 (drives crop yield multiplier)
+        float waterTable,       // 0–1 (0=drought, 1=flooded)
+        SoilType soilType
+) {
+    public static final MapCodec<EcologyProfile> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+            ResourceLocation.CODEC.fieldOf("biome").forGetter(EcologyProfile::biomeId),
+            Codec.FLOAT.fieldOf("predator_count").forGetter(EcologyProfile::predatorCount),
+            Codec.FLOAT.fieldOf("prey_count").forGetter(EcologyProfile::preyCount),
+            Codec.FLOAT.fieldOf("plant_biomass").forGetter(EcologyProfile::plantBiomass),
+            Codec.FLOAT.fieldOf("soil_health").forGetter(EcologyProfile::soilHealth),
+            Codec.FLOAT.fieldOf("water_table").forGetter(EcologyProfile::waterTable),
+            SoilType.CODEC.fieldOf("soil_type").forGetter(EcologyProfile::soilType)
+    ).apply(inst, EcologyProfile::new));
+
+    /** Returns imbalance score 0.0 (perfect) to 1.0 (critical). */
+    public float imbalanceScore() {
+        float predPreyRatio = predatorCount > 0 ? preyCount / predatorCount : 0f;
+        float predPreyScore = Math.abs(predPreyRatio - 10f) / 10f; // ideal ratio 1:10
+        float biomassScore  = 1f - plantBiomass;
+        float soilScore     = 1f - soilHealth;
+        float waterScore    = Math.abs(waterTable - 0.5f) * 2f;
+        return (predPreyScore + biomassScore + soilScore + waterScore) / 4f;
+    }
+
+    public EcologyProfile withPredatorCount(float v)  { return new EcologyProfile(biomeId, v, preyCount, plantBiomass, soilHealth, waterTable, soilType); }
+    public EcologyProfile withPreyCount(float v)      { return new EcologyProfile(biomeId, predatorCount, v, plantBiomass, soilHealth, waterTable, soilType); }
+    public EcologyProfile withPlantBiomass(float v)   { return new EcologyProfile(biomeId, predatorCount, preyCount, v, soilHealth, waterTable, soilType); }
+    public EcologyProfile withSoilHealth(float v)     { return new EcologyProfile(biomeId, predatorCount, preyCount, plantBiomass, v, waterTable, soilType); }
+    public EcologyProfile withWaterTable(float v)     { return new EcologyProfile(biomeId, predatorCount, preyCount, plantBiomass, soilHealth, v, soilType); }
+}
+```
+
+### 11.2 `SoilType.java`
+
+```java
+package com.horizonpack.horizonworld.data.ecology;
+
+import com.mojang.serialization.Codec;
+
+public enum SoilType {
+    LOAM(1.0f, 0.7f),       // best for crops
+    CLAY(0.6f, 0.9f),       // high water retention, poor drainage
+    SAND(0.3f, 0.2f),       // fast drainage, poor nutrients
+    PEAT(0.8f, 0.95f),      // acidic, good nutrients, very high water retention
+    VOLCANIC(1.3f, 0.5f),   // extremely fertile after cooling
+    PERMAFROST(0.0f, 0.0f); // cannot grow crops
+
+    public final float cropYieldMultiplier;
+    public final float waterRetention;
+
+    SoilType(float cropYield, float waterRetention) {
+        this.cropYieldMultiplier = cropYield;
+        this.waterRetention = waterRetention;
+    }
+
+    public static final Codec<SoilType> CODEC =
+        Codec.STRING.xmap(SoilType::valueOf, SoilType::name);
+}
+```
+
+### 11.3 `EcologyEngine.java`
+
+```java
+package com.horizonpack.horizonworld.systems;
+
+import com.horizonpack.horizonworld.data.ecology.EcologyProfile;
+import com.horizonpack.horizonworld.events.custom.EcologyImbalanceEvent;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.neoforge.common.NeoForge;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class EcologyEngine {
+    private EcologyEngine() {}
+
+    // Chunk key → EcologyProfile; not persisted (recomputed on load from entity counts)
+    private static final Map<Long, EcologyProfile> profiles = new ConcurrentHashMap<>();
+    private static final float IMBALANCE_THRESHOLD = 0.65f;
+
+    public static EcologyProfile getProfile(int chunkX, int chunkZ) {
+        return profiles.get(chunkKey(chunkX, chunkZ));
+    }
+
+    public static void updateProfile(int chunkX, int chunkZ, EcologyProfile profile) {
+        profiles.put(chunkKey(chunkX, chunkZ), profile);
+        if (profile.imbalanceScore() > IMBALANCE_THRESHOLD) {
+            // Fired on main thread via server tick, so posting directly is safe
+        }
+    }
+
+    /** Called on server tick (every 100 ticks) for loaded chunks near players. */
+    public static void tickEcology(ServerLevel level) {
+        // Iterate through profiles for loaded chunks and apply natural recovery
+        profiles.replaceAll((key, profile) -> {
+            float newSoil = Math.min(1f, profile.soilHealth() + 0.001f); // slow natural recovery
+            float newBiomass = Math.min(1f, profile.plantBiomass() + 0.002f);
+            EcologyProfile updated = profile.withSoilHealth(newSoil).withPlantBiomass(newBiomass);
+
+            if (updated.imbalanceScore() > IMBALANCE_THRESHOLD) {
+                NeoForge.EVENT_BUS.post(new EcologyImbalanceEvent(level, updated, key));
+            }
+            return updated;
+        });
+    }
+
+    private static long chunkKey(int cx, int cz) {
+        return (long)cx << 32 | (cz & 0xFFFFFFFFL);
+    }
+}
+```
+
+---
+
+## 12. World SavedData & Planet State
+
+*(See §5.1 for `PlanetData`, §9.2 for `SeasonData`. Summary of all SavedData objects:)*
+
+| Class | Key | Contents |
+|---|---|---|
+| `PlanetData` | `horizonworld_planet` | Continent map, tectonic plates, active disasters |
+| `SeasonData` | `horizonworld_season` | Current season, day-in-season, WeatherState |
+
+Both call `setDirty()` on every mutation. Both use `level.getDataStorage().computeIfAbsent()` with a `Factory` that provides the no-arg constructor for new worlds and the `load(CompoundTag)` static method for existing ones.
+
+---
+
+## 13. Block Registry — World-Specific Blocks
+
+### 13.1 `WorldRegistries.java` (block registration excerpt)
+
+```java
+package com.horizonpack.horizonworld.core;
+
+import com.horizonpack.horizonworld.blocks.geology.*;
+import com.horizonpack.horizonworld.blocks.disaster.*;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.minecraft.core.registries.BuiltInRegistries;
+
+public class WorldRegistries {
+    public static final DeferredRegister.Blocks BLOCKS =
+        DeferredRegister.createBlocks(HorizonWorld.MODID);
+    public static final DeferredRegister.Items ITEMS =
+        DeferredRegister.createItems(HorizonWorld.MODID);
+
+    // --- Geological Surface Blocks ---
+    public static final DeferredBlock<LoamBlock> LOAM =
+        BLOCKS.registerBlock("loam", LoamBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.DIRT)
+                .strength(0.6f).sound(SoundType.GRAVEL));
+
+    public static final DeferredBlock<PeatBlock> PEAT =
+        BLOCKS.registerBlock("peat", PeatBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.COLOR_BROWN)
+                .strength(0.5f).sound(SoundType.MOSS));
+
+    public static final DeferredBlock<Block> CALICHE =
+        BLOCKS.registerSimpleBlock("caliche",
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.SAND)
+                .strength(1.2f).sound(SoundType.CALCITE));
+
+    public static final DeferredBlock<PermafrostBlock> PERMAFROST =
+        BLOCKS.registerBlock("permafrost", PermafrostBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.ICE)
+                .strength(0.8f).sound(SoundType.PACKED_ICE));
+
+    public static final DeferredBlock<VolcanicAshBlock> VOLCANIC_ASH =
+        BLOCKS.registerBlock("volcanic_ash", VolcanicAshBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.COLOR_GRAY)
+                .strength(0.4f).sound(SoundType.SAND)
+                .noOcclusion());
+
+    public static final DeferredBlock<Block> TEPHRITE =
+        BLOCKS.registerSimpleBlock("tephrite",
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.STONE)
+                .strength(2.5f, 6.0f).sound(SoundType.BASALT));
+
+    // --- Disaster Aftermath Blocks ---
+    public static final DeferredBlock<FloodSiltBlock> FLOOD_SILT =
+        BLOCKS.registerBlock("flood_silt", FloodSiltBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.COLOR_BROWN)
+                .strength(0.5f).sound(SoundType.SAND));
+
+    public static final DeferredBlock<ScorchedEarthBlock> SCORCHED_EARTH =
+        BLOCKS.registerBlock("scorched_earth", ScorchedEarthBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.COLOR_BLACK)
+                .strength(0.6f).sound(SoundType.GRAVEL));
+
+    public static final DeferredBlock<Block> LANDSLIDE_DEBRIS =
+        BLOCKS.registerSimpleBlock("landslide_debris",
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.STONE)
+                .strength(1.0f).sound(SoundType.GRAVEL));
+
+    public static final DeferredBlock<FrostCrackBlock> FROST_CRACK =
+        BLOCKS.registerBlock("frost_crack", FrostCrackBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.STONE)
+                .strength(1.5f).sound(SoundType.STONE)
+                .noOcclusion());
+
+    public static final DeferredBlock<DroughtCrackedEarthBlock> DROUGHT_CRACKED_EARTH =
+        BLOCKS.registerBlock("drought_cracked_earth", DroughtCrackedEarthBlock::new,
+            BlockBehaviour.Properties.of()
+                .mapColor(MapColor.DIRT)
+                .strength(0.6f).sound(SoundType.GRAVEL));
+
+    // --- Auto-register BlockItems ---
+    static {
+        BLOCKS.getEntries().forEach(block ->
+            ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+    }
+}
+```
+
+### 13.2 `PermafrostBlock.java`
+
+```java
+package com.horizonpack.horizonworld.blocks.geology;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+
+/**
+ * Permafrost: prevents crop growth, thaws permanently if temperature > 5°C,
+ * becoming Loam underneath the thaw layer.
+ */
+public class PermafrostBlock extends Block {
+    public PermafrostBlock(Properties props) { super(props); }
+
+    @Override
+    public void randomTick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+        // Query ClimateEngine for this position's temperature
+        var snap = com.horizonpack.horizonworld.systems.ClimateEngine.getSnapshot(level, pos);
+        if (snap.temperature() > 5f && random.nextFloat() < 0.02f) {
+            // Thaw: replace with Loam
+            level.setBlock(pos, com.horizonpack.horizonworld.core.WorldRegistries.LOAM.get().defaultBlockState(), 3);
+        }
+    }
+}
+```
+
+### 13.3 `VolcanicAshBlock.java`
+
+```java
+package com.horizonpack.horizonworld.blocks.geology;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
+
+/**
+ * Volcanic ash: falls like sand, accumulates in layers like snow,
+ * gradually converts to fertile Loam over time (post-eruption soil enrichment).
+ */
+public class VolcanicAshBlock extends FallingBlock {
+    private static final VoxelShape ASH_SHAPE = Block.box(0, 0, 0, 16, 2, 16);
+
+    public VolcanicAshBlock(Properties props) { super(props); }
+
+    @Override
+    public VoxelShape getShape(BlockState state, BlockGetter world, BlockPos pos, CollisionContext ctx) {
+        return ASH_SHAPE;
+    }
+
+    @Override
+    public void randomTick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+        // After 7 in-game days (configurable), ash converts to Loam
+        if (random.nextFloat() < 0.01f) {
+            level.setBlock(pos,
+                com.horizonpack.horizonworld.core.WorldRegistries.LOAM.get().defaultBlockState(), 3);
+        }
+    }
+}
+```
+
+### 13.4 `FloodSiltBlock.java`
+
+```java
+package com.horizonpack.horizonworld.blocks.disaster;
+
+import com.horizonpack.horizonworld.core.WorldRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+
+/**
+ * Left behind after flood recedes. High nutrient content — improves soil health
+ * in HorizonEconomy's agriculture system. Converts to Loam after 3 days.
+ */
+public class FloodSiltBlock extends Block {
+    public FloodSiltBlock(Properties props) { super(props); }
+
+    @Override
+    public void randomTick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random) {
+        if (random.nextFloat() < 0.02f) {
+            level.setBlock(pos, WorldRegistries.LOAM.get().defaultBlockState(), 3);
+            // Notify EcologyEngine: soil health boost
+            var profile = com.horizonpack.horizonworld.systems.EcologyEngine
+                .getProfile(pos.getX() >> 4, pos.getZ() >> 4);
+            if (profile != null) {
+                com.horizonpack.horizonworld.systems.EcologyEngine.updateProfile(
+                    pos.getX() >> 4, pos.getZ() >> 4,
+                    profile.withSoilHealth(Math.min(1f, profile.soilHealth() + 0.1f)));
+            }
+        }
+    }
+}
+```
+
+---
+
+## 14. Event Hooks
+
+### 14.1 Custom Events
+
+```java
+// WeatherChangeEvent.java
+package com.horizonpack.horizonworld.events.custom;
+
+import com.horizonpack.horizonworld.data.climate.WeatherType;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.Event;
+
+public class WeatherChangeEvent extends Event {
+    private final ServerLevel level;
+    private final WeatherType previous;
+    private final WeatherType next;
+
+    public WeatherChangeEvent(ServerLevel level, WeatherType previous, WeatherType next) {
+        this.level = level; this.previous = previous; this.next = next;
+    }
+
+    public ServerLevel level()    { return level; }
+    public WeatherType previous() { return previous; }
+    public WeatherType next()     { return next; }
+}
+```
+
+```java
+// SeasonChangeEvent.java
+package com.horizonpack.horizonworld.events.custom;
+
+import com.horizonpack.horizonworld.data.climate.Season;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.Event;
+
+public class SeasonChangeEvent extends Event {
+    private final ServerLevel level;
+    private final Season previous;
+    private final Season current;
+
+    public SeasonChangeEvent(ServerLevel level, Season previous, Season current) {
+        this.level = level; this.previous = previous; this.current = current;
+    }
+
+    public ServerLevel level()  { return level; }
+    public Season previous()    { return previous; }
+    public Season current()     { return current; }
+}
+```
+
+```java
+// DisasterStartEvent.java
+package com.horizonpack.horizonworld.events.custom;
+
+import com.horizonpack.horizonworld.data.disaster.DisasterInstance;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.ICancellableEvent;
+import net.neoforged.bus.api.Event;
+
+/** Cancellable — cancel to prevent disaster from being added to the active list. */
+public class DisasterStartEvent extends Event implements ICancellableEvent {
+    private final ServerLevel level;
+    private final DisasterInstance disaster;
+
+    public DisasterStartEvent(ServerLevel level, DisasterInstance disaster) {
+        this.level = level; this.disaster = disaster;
+    }
+
+    public ServerLevel level()           { return level; }
+    public DisasterInstance disaster()   { return disaster; }
+}
+```
+
+```java
+// EcologyImbalanceEvent.java
+package com.horizonpack.horizonworld.events.custom;
+
+import com.horizonpack.horizonworld.data.ecology.EcologyProfile;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.Event;
+
+/**
+ * Fired when a chunk's ecology imbalance score crosses 0.65.
+ * HorizonBiome listens to spawn invasive species or trigger die-offs.
+ */
+public class EcologyImbalanceEvent extends Event {
+    private final ServerLevel level;
+    private final EcologyProfile profile;
+    private final long chunkKey;
+
+    public EcologyImbalanceEvent(ServerLevel level, EcologyProfile profile, long chunkKey) {
+        this.level = level; this.profile = profile; this.chunkKey = chunkKey;
+    }
+
+    public ServerLevel level()        { return level; }
+    public EcologyProfile profile()   { return profile; }
+    public long chunkKey()            { return chunkKey; }
+}
+```
+
+### 14.2 `WorldEventHandlers.java`
+
+```java
+package com.horizonpack.horizonworld.events;
+
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizonworld.data.climate.SeasonData;
+import com.horizonpack.horizonworld.data.planet.PlanetData;
+import com.horizonpack.horizonworld.network.WorldPacketHandler;
+import com.horizonpack.horizonworld.network.packets.*;
+import com.horizonpack.horizonworld.systems.*;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+
+public class WorldEventHandlers {
+    private static int ecologyAccum = 0;
+
+    @SubscribeEvent
+    public static void onServerLevelTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        if (level.isClientSide()) return;
+
+        SeasonData seasonData = SeasonData.get(level);
+        WeatherEngine.tick(level, seasonData.getWeatherState());
+        DisasterEngine.tick(level);
+        TectonicEngine.tick(level);
+
+        ecologyAccum++;
+        if (ecologyAccum >= 100) {
+            ecologyAccum = 0;
+            EcologyEngine.tickEcology(level);
+        }
+    }
+
+    /** Listens to HorizonCore's DayAdvanceEvent to advance seasons. */
+    @SubscribeEvent
+    public static void onDayAdvance(DayAdvanceEvent event) {
+        if (!(event.level() instanceof ServerLevel level)) return;
+        SeasonEngine.onDayAdvance(level);
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        ServerLevel level = (ServerLevel) player.level();
+        SeasonData seasonData = SeasonData.get(level);
+
+        // Sync full world state to joining player
+        WorldPacketHandler.sendToPlayer(player, new SyncSeasonPacket(
+            seasonData.getCurrentSeason(), seasonData.getDayInSeason()));
+        WorldPacketHandler.sendToPlayer(player, new SyncWeatherPacket(
+            seasonData.getWeatherState()));
+        WorldPacketHandler.sendToPlayer(player, new SyncDisasterPacket(
+            PlanetData.get(level).activeDisasters()));
+    }
+
+    @SubscribeEvent
+    public static void onLevelLoad(LevelEvent.Load event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        // Ensure PlanetData and SeasonData are initialized
+        PlanetData.get(level);
+        SeasonData.get(level);
+        ClimateEngine.init();
+    }
+}
+```
+
+---
+
+## 15. Network Packets
+
+### 15.1 `WorldPacketHandler.java`
+
+```java
+package com.horizonpack.horizonworld.network;
+
+import com.horizonpack.horizonworld.core.HorizonWorld;
+import com.horizonpack.horizonworld.network.packets.*;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class WorldPacketHandler {
+
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar reg = event.registrar(HorizonWorld.MODID).versioned("1.0");
+
+        reg.playToClient(SyncWeatherPacket.TYPE, SyncWeatherPacket.STREAM_CODEC,
+                SyncWeatherPacket::handleClient);
+        reg.playToClient(SyncSeasonPacket.TYPE, SyncSeasonPacket.STREAM_CODEC,
+                SyncSeasonPacket::handleClient);
+        reg.playToClient(SyncDisasterPacket.TYPE, SyncDisasterPacket.STREAM_CODEC,
+                SyncDisasterPacket::handleClient);
+        reg.playToClient(SyncClimatePacket.TYPE, SyncClimatePacket.STREAM_CODEC,
+                SyncClimatePacket::handleClient);
+        reg.playToClient(DisasterWarningPacket.TYPE, DisasterWarningPacket.STREAM_CODEC,
+                DisasterWarningPacket::handleClient);
+    }
+
+    public static void sendToPlayer(ServerPlayer player, net.neoforged.neoforge.network.packet.CustomPacketPayload payload) {
+        PacketDistributor.sendToPlayer(player, payload);
+    }
+
+    public static void sendToAll(net.minecraft.server.MinecraftServer server,
+                                  net.neoforged.neoforge.network.packet.CustomPacketPayload payload) {
+        PacketDistributor.sendToAllPlayers(payload);
+    }
+}
+```
+
+### 15.2 `SyncWeatherPacket.java`
+
+```java
+package com.horizonpack.horizonworld.network.packets;
+
+import com.horizonpack.horizonworld.client.WeatherClientState;
+import com.horizonpack.horizonworld.core.HorizonWorld;
+import com.horizonpack.horizonworld.data.climate.WeatherState;
+import com.horizonpack.horizonworld.data.climate.WeatherType;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record SyncWeatherPacket(WeatherType weatherType, float intensity, boolean transitioning) implements CustomPacketPayload {
+
+    public static final Type<SyncWeatherPacket> TYPE =
+        new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonWorld.MODID, "sync_weather"));
+
+    public static final StreamCodec<ByteBuf, SyncWeatherPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.STRING_UTF8.map(WeatherType::valueOf, WeatherType::name),
+            SyncWeatherPacket::weatherType,
+        ByteBufCodecs.FLOAT,
+            SyncWeatherPacket::intensity,
+        ByteBufCodecs.BOOL,
+            SyncWeatherPacket::transitioning,
+        SyncWeatherPacket::new
+    );
+
+    @Override public Type<SyncWeatherPacket> type() { return TYPE; }
+
+    public static void handleClient(SyncWeatherPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> WeatherClientState.update(packet.weatherType(), packet.intensity()));
+    }
+}
+```
+
+### 15.3 `SyncSeasonPacket.java`
+
+```java
+package com.horizonpack.horizonworld.network.packets;
+
+import com.horizonpack.horizonworld.client.SeasonClientState;
+import com.horizonpack.horizonworld.core.HorizonWorld;
+import com.horizonpack.horizonworld.data.climate.Season;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record SyncSeasonPacket(Season season, int dayInSeason) implements CustomPacketPayload {
+
+    public static final Type<SyncSeasonPacket> TYPE =
+        new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonWorld.MODID, "sync_season"));
+
+    public static final StreamCodec<ByteBuf, SyncSeasonPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.STRING_UTF8.map(Season::valueOf, Season::name),
+            SyncSeasonPacket::season,
+        ByteBufCodecs.INT,
+            SyncSeasonPacket::dayInSeason,
+        SyncSeasonPacket::new
+    );
+
+    @Override public Type<SyncSeasonPacket> type() { return TYPE; }
+
+    public static void handleClient(SyncSeasonPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> SeasonClientState.update(packet.season(), packet.dayInSeason()));
+    }
+}
+```
+
+### 15.4 `DisasterWarningPacket.java`
+
+```java
+package com.horizonpack.horizonworld.network.packets;
+
+import com.horizonpack.horizonworld.core.HorizonWorld;
+import com.horizonpack.horizonworld.data.disaster.DisasterType;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record DisasterWarningPacket(DisasterType type, int secondsUntilActive) implements CustomPacketPayload {
+
+    public static final Type<DisasterWarningPacket> TYPE =
+        new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonWorld.MODID, "disaster_warning"));
+
+    public static final StreamCodec<ByteBuf, DisasterWarningPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.STRING_UTF8.map(DisasterType::valueOf, DisasterType::name),
+            DisasterWarningPacket::type,
+        ByteBufCodecs.INT,
+            DisasterWarningPacket::secondsUntilActive,
+        DisasterWarningPacket::new
+    );
+
+    @Override public Type<DisasterWarningPacket> type() { return TYPE; }
+
+    public static void handleClient(DisasterWarningPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            // Open DisasterWarningScreen or queue a HUD notification
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            // Show warning overlay — screen opened by client GUI registry
+        });
+    }
+}
+```
+
+---
+
+## 16. Configuration
+
+### 16.1 `WorldConfig.java`
+
+```java
+package com.horizonpack.horizonworld.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class WorldConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    public static class Common {
+        // World generation
+        public final ModConfigSpec.IntValue continentCount;
+        public final ModConfigSpec.FloatValue oceanFraction;
+        public final ModConfigSpec.IntValue seaLevel;
+        public final ModConfigSpec.BooleanValue enableVolcanism;
+        public final ModConfigSpec.BooleanValue enableRiftValleys;
+
+        // Climate
+        public final ModConfigSpec.IntValue daysPerSeason;
+        public final ModConfigSpec.BooleanValue enableSeasons;
+        public final ModConfigSpec.BooleanValue enableAdvancedWeather;
+
+        // Disasters
+        public final ModConfigSpec.BooleanValue enableDisasters;
+        public final ModConfigSpec.DoubleValue disasterFrequency;
+        public final ModConfigSpec.IntValue maxSimultaneousDisasters;
+        public final ModConfigSpec.IntValue disasterWarningSeconds;
+
+        // Ecology
+        public final ModConfigSpec.BooleanValue enableEcology;
+        public final ModConfigSpec.DoubleValue ecologyTickRate;
+        public final ModConfigSpec.DoubleValue imbalanceThreshold;
+
+        Common(ModConfigSpec.Builder b) {
+            b.push("worldgen");
+            continentCount   = b.comment("Number of continents to generate (1–20)")
+                                .defineInRange("continentCount", 7, 1, 20);
+            oceanFraction    = b.comment("Fraction of world covered by ocean (0.0–0.9)")
+                                .defineInRange("oceanFraction", 0.65f, 0.1f, 0.9f);
+            seaLevel         = b.comment("Y-level of the sea surface")
+                                .defineInRange("seaLevel", 64, 32, 200);
+            enableVolcanism  = b.comment("Generate volcanic vents and calderas")
+                                .define("enableVolcanism", true);
+            enableRiftValleys = b.comment("Carve rift valleys at divergent plate boundaries")
+                                .define("enableRiftValleys", true);
+            b.pop();
+
+            b.push("climate");
+            daysPerSeason      = b.comment("In-game days per season (default 30)")
+                                  .defineInRange("daysPerSeason", 30, 5, 365);
+            enableSeasons      = b.comment("Enable seasonal temperature/crop changes")
+                                  .define("enableSeasons", true);
+            enableAdvancedWeather = b.comment("Enable hurricanes, tornadoes, blizzards etc.")
+                                     .define("enableAdvancedWeather", true);
+            b.pop();
+
+            b.push("disasters");
+            enableDisasters          = b.define("enableDisasters", true);
+            disasterFrequency        = b.comment("Base probability multiplier (0.0–2.0)")
+                                        .defineInRange("disasterFrequency", 1.0, 0.0, 2.0);
+            maxSimultaneousDisasters = b.defineInRange("maxSimultaneousDisasters", 3, 1, 10);
+            disasterWarningSeconds   = b.comment("Seconds of warning before ACTIVE phase")
+                                        .defineInRange("disasterWarningSeconds", 60, 10, 600);
+            b.pop();
+
+            b.push("ecology");
+            enableEcology      = b.define("enableEcology", true);
+            ecologyTickRate    = b.comment("Fraction of loaded chunks ticked per second")
+                                  .defineInRange("ecologyTickRate", 0.1, 0.01, 1.0);
+            imbalanceThreshold = b.defineInRange("imbalanceThreshold", 0.65, 0.3, 1.0);
+            b.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showClimateHUD;
+        public final ModConfigSpec.BooleanValue showSeasonHUD;
+        public final ModConfigSpec.BooleanValue showDisasterWarning;
+        public final ModConfigSpec.BooleanValue enableWeatherParticles;
+        public final ModConfigSpec.BooleanValue enableAuroraRenderer;
+
+        Client(ModConfigSpec.Builder b) {
+            b.push("hud");
+            showClimateHUD      = b.define("showClimateHUD", true);
+            showSeasonHUD       = b.define("showSeasonHUD", true);
+            showDisasterWarning = b.define("showDisasterWarning", true);
+            b.pop();
+
+            b.push("graphics");
+            enableWeatherParticles = b.define("enableWeatherParticles", true);
+            enableAuroraRenderer   = b.define("enableAuroraRenderer", true);
+            b.pop();
+        }
+    }
+
+    static {
+        var cb = new ModConfigSpec.Builder();
+        COMMON = new Common(cb); COMMON_SPEC = cb.build();
+        var clb = new ModConfigSpec.Builder();
+        CLIENT = new Client(clb); CLIENT_SPEC = clb.build();
+    }
+}
+```
+
+---
+
+## 17. Data Pack Integration
+
+### 17.1 Continent Definition JSON
+
+**`data/horizonworld/continent/continent_a.json`**
+```json
+{
+  "id": "horizonworld:continent_a",
+  "display_name": "Ferrum Continent",
+  "tectonic_type": "CONTINENTAL",
+  "geology_profile": "horizonworld:geology_iron_coal",
+  "base_elevation": 400,
+  "seismic_activity": 0.4,
+  "volcanic_activity": 0.2,
+  "resource_biases": [
+    { "ore": "horizondata:iron_ore",  "multiplier": 1.8 },
+    { "ore": "horizondata:coal_ore",  "multiplier": 2.0 },
+    { "ore": "horizondata:copper_ore","multiplier": 1.2 }
+  ]
+}
+```
+
+### 17.2 Geology Profile JSON
+
+**`data/horizonworld/geology_profile/geology_iron_coal.json`**
+```json
+{
+  "id": "horizonworld:geology_iron_coal",
+  "metamorphic_depth_fraction": 0.75,
+  "igneous_intrusions": 0.05,
+  "layers": [
+    { "block": "horizondata:limestone",     "min_thickness": 8,  "max_thickness": 20, "noise_variation": 0.4 },
+    { "block": "horizondata:shale",         "min_thickness": 12, "max_thickness": 30, "noise_variation": 0.5 },
+    { "block": "horizondata:sandstone_red", "min_thickness": 6,  "max_thickness": 15, "noise_variation": 0.3 },
+    { "block": "horizondata:granite",       "min_thickness": 30, "max_thickness": 80, "noise_variation": 0.6 },
+    { "block": "horizondata:gneiss",        "min_thickness": 20, "max_thickness": 50, "noise_variation": 0.4 }
+  ]
+}
+```
+
+### 17.3 Biome JSON (Climate-Mapped)
+
+**`data/horizonworld/worldgen/biome/tropical_rainforest.json`**
+```json
+{
+  "climate_zone": "TROPICAL",
+  "temperature": 28.0,
+  "downfall": 0.9,
+  "effects": {
+    "sky_color": 7842047,
+    "fog_color": 12638463,
+    "water_color": 4159204,
+    "water_fog_color": 329011,
+    "grass_color": 10145074,
+    "foliage_color": 11002665
+  },
+  "spawners": {
+    "creature": [
+      { "type": "minecraft:parrot",   "weight": 10, "minCount": 1, "maxCount": 3 },
+      { "type": "minecraft:ocelot",   "weight": 5,  "minCount": 1, "maxCount": 2 }
+    ],
+    "monster": [
+      { "type": "minecraft:zombie",   "weight": 80, "minCount": 2, "maxCount": 4 }
+    ]
+  },
+  "carvers": {},
+  "features": [
+    ["horizonworld:tropical_vegetation"],
+    ["horizonworld:hot_spring"],
+    ["minecraft:lake_water"]
+  ]
+}
+```
+
+### 17.4 Configured Feature JSONs
+
+**`data/horizonworld/worldgen/configured_feature/volcanic_vent.json`**
+```json
+{
+  "type": "horizonworld:volcanic_vent",
+  "config": {
+    "vent_radius": 8,
+    "caldera_radius": 24,
+    "magma_depth": 3,
+    "ash_radius": 60,
+    "erupt_probability": 0.0001
+  }
+}
+```
+
+**`data/horizonworld/worldgen/configured_feature/kimberlite_pipe.json`**
+```json
+{
+  "type": "horizonworld:kimberlite_pipe",
+  "config": {
+    "pipe_radius": 4,
+    "depth_start": -48,
+    "depth_end": 16,
+    "diamond_density": 0.08,
+    "olivine_density": 0.4
+  }
+}
+```
+
+**`data/horizonworld/worldgen/configured_feature/hot_spring.json`**
+```json
+{
+  "type": "horizonworld:hot_spring",
+  "config": {
+    "pool_radius": 5,
+    "temperature_bonus": 15.0,
+    "healing_aura_radius": 8,
+    "mineral_deposits": ["horizondata:travertine", "horizondata:sulfur_crust"]
+  }
+}
+```
+
+---
+
+## 18. Blockstate & Model JSONs
+
+### 18.1 Loam
+
+**`assets/horizonworld/blockstates/loam.json`**
+```json
+{
+  "variants": {
+    "": { "model": "horizonworld:block/loam" }
+  }
+}
+```
+
+**`assets/horizonworld/models/block/loam.json`**
+```json
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "horizonworld:block/loam"
+  }
+}
+```
+
+**`assets/horizonworld/models/item/loam.json`**
+```json
+{
+  "parent": "horizonworld:block/loam"
+}
+```
+
+### 18.2 Volcanic Ash (thin layer — custom model)
+
+**`assets/horizonworld/blockstates/volcanic_ash.json`**
+```json
+{
+  "variants": {
+    "": { "model": "horizonworld:block/volcanic_ash" }
+  }
+}
+```
+
+**`assets/horizonworld/models/block/volcanic_ash.json`**
+```json
+{
+  "parent": "minecraft:block/thin_block",
+  "textures": {
+    "particle": "horizonworld:block/volcanic_ash",
+    "texture":  "horizonworld:block/volcanic_ash"
+  },
+  "elements": [
+    {
+      "from": [0, 0, 0],
+      "to":   [16, 2, 16],
+      "faces": {
+        "up":   { "texture": "#texture", "cullface": "up"   },
+        "down": { "texture": "#texture", "cullface": "down" },
+        "north":{ "texture": "#texture", "cullface": "north"},
+        "south":{ "texture": "#texture", "cullface": "south"},
+        "east": { "texture": "#texture", "cullface": "east" },
+        "west": { "texture": "#texture", "cullface": "west" }
+      }
+    }
+  ]
+}
+```
+
+### 18.3 Drought Cracked Earth (directional cracks — four rotations)
+
+**`assets/horizonworld/blockstates/drought_cracked_earth.json`**
+```json
+{
+  "variants": {
+    "facing=north": { "model": "horizonworld:block/drought_cracked_earth" },
+    "facing=south": { "model": "horizonworld:block/drought_cracked_earth", "y": 180 },
+    "facing=east":  { "model": "horizonworld:block/drought_cracked_earth", "y": 90  },
+    "facing=west":  { "model": "horizonworld:block/drought_cracked_earth", "y": 270 }
+  }
+}
+```
+
+**`assets/horizonworld/models/block/drought_cracked_earth.json`**
+```json
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "bottom": "minecraft:block/dirt",
+    "top":    "horizonworld:block/drought_cracked_earth_top",
+    "side":   "minecraft:block/dirt"
+  }
+}
+```
+
+---
+
+## 19. Loot Table JSONs
+
+### 19.1 Loam
+
+**`data/horizonworld/loot_tables/blocks/loam.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "bonus_rolls": 0,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonworld:loam",
+          "conditions": [
+            { "condition": "minecraft:match_tool",
+              "predicate": { "enchantments": [{ "enchantment": "minecraft:silk_touch", "levels": { "min": 1 } }] } }
+          ]
+        },
+        {
+          "type": "minecraft:item",
+          "name": "minecraft:dirt",
+          "conditions": [
+            { "condition": "minecraft:inverted",
+              "term": { "condition": "minecraft:match_tool",
+                        "predicate": { "enchantments": [{ "enchantment": "minecraft:silk_touch", "levels": { "min": 1 } }] } } }
+          ]
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+```
+
+### 19.2 Peat
+
+**`data/horizonworld/loot_tables/blocks/peat.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonworld:peat",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": { "type": "minecraft:uniform", "min": 1, "max": 2 },
+              "conditions": [
+                { "condition": "minecraft:inverted",
+                  "term": { "condition": "minecraft:match_tool",
+                            "predicate": { "enchantments": [{ "enchantment": "minecraft:silk_touch", "levels": { "min": 1 } }] } } }
+              ]
+            }
+          ]
+        }
+      ],
+      "conditions": [{ "condition": "minecraft:survives_explosion" }]
+    }
+  ]
+}
+```
+
+### 19.3 Volcanic Ash
+
+**`data/horizonworld/loot_tables/blocks/volcanic_ash.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonworld:volcanic_ash",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": { "type": "minecraft:uniform", "min": 1, "max": 4 }
+            }
+          ]
+        }
+      ],
+      "conditions": [{ "condition": "minecraft:survives_explosion" }]
+    }
+  ]
+}
+```
+
+### 19.4 Flood Silt
+
+**`data/horizonworld/loot_tables/blocks/flood_silt.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonworld:flood_silt"
+        },
+        {
+          "type": "minecraft:item",
+          "name": "horizondata:river_clay",
+          "weight": 3,
+          "conditions": [
+            { "condition": "minecraft:random_chance", "chance": 0.3 }
+          ]
+        }
+      ],
+      "conditions": [{ "condition": "minecraft:survives_explosion" }]
+    }
+  ]
+}
+```
+
+---
+
+## 20. Tag JSONs
+
+### 20.1 Block Tags
+
+**`data/horizonworld/tags/blocks/geological_surface.json`**
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:loam",
+    "horizonworld:peat",
+    "horizonworld:caliche",
+    "horizonworld:permafrost",
+    "horizonworld:tephrite"
+  ]
+}
+```
+
+**`data/horizonworld/tags/blocks/disaster_blocks.json`**
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:flood_silt",
+    "horizonworld:scorched_earth",
+    "horizonworld:landslide_debris",
+    "horizonworld:frost_crack",
+    "horizonworld:drought_cracked_earth",
+    "horizonworld:volcanic_ash"
+  ]
+}
+```
+
+**`data/horizonworld/tags/blocks/flammable_terrain.json`**
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:peat",
+    "horizonworld:loam",
+    "horizonworld:scorched_earth"
+  ]
+}
+```
+
+**`data/c/tags/blocks/dirt_like.json`** *(extends common tag)*
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:loam",
+    "horizonworld:peat",
+    "horizonworld:flood_silt"
+  ]
+}
+```
+
+### 20.2 Item Tags
+
+**`data/horizonworld/tags/items/geological_samples.json`**
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:loam",
+    "horizonworld:peat",
+    "horizonworld:caliche",
+    "horizonworld:tephrite",
+    "horizonworld:volcanic_ash"
+  ]
+}
+```
+
+**`data/horizonworld/tags/items/disaster_debris.json`**
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:flood_silt",
+    "horizonworld:scorched_earth",
+    "horizonworld:landslide_debris"
+  ]
+}
+```
+
+**`data/c/tags/items/soil.json`** *(extends c: namespace)*
+```json
+{
+  "replace": false,
+  "values": [
+    "horizonworld:loam",
+    "horizonworld:peat",
+    "#horizonworld:geological_samples"
+  ]
+}
+```
+
+---
+
+## 21. Lang / Localization
+
+**`assets/horizonworld/lang/en_us.json`**
+```json
+{
+  "itemGroup.horizonworld.geology":      "HorizonWorld — Geology",
+  "itemGroup.horizonworld.disasters":    "HorizonWorld — Disaster Blocks",
+
+  "block.horizonworld.loam":                "Loam",
+  "block.horizonworld.peat":                "Peat",
+  "block.horizonworld.caliche":             "Caliche",
+  "block.horizonworld.permafrost":          "Permafrost",
+  "block.horizonworld.volcanic_ash":        "Volcanic Ash",
+  "block.horizonworld.tephrite":            "Tephrite",
+  "block.horizonworld.flood_silt":          "Flood Silt",
+  "block.horizonworld.scorched_earth":      "Scorched Earth",
+  "block.horizonworld.landslide_debris":    "Landslide Debris",
+  "block.horizonworld.frost_crack":         "Frost-Cracked Stone",
+  "block.horizonworld.drought_cracked_earth": "Drought-Cracked Earth",
+
+  "horizonworld.climate.zone.tropical":    "Tropical",
+  "horizonworld.climate.zone.arid":        "Arid",
+  "horizonworld.climate.zone.temperate":   "Temperate",
+  "horizonworld.climate.zone.continental": "Continental",
+  "horizonworld.climate.zone.polar":       "Polar",
+
+  "horizonworld.season.spring":    "Spring",
+  "horizonworld.season.summer":    "Summer",
+  "horizonworld.season.autumn":    "Autumn",
+  "horizonworld.season.winter":    "Winter",
+
+  "horizonworld.weather.clear":            "Clear",
+  "horizonworld.weather.light_rain":       "Light Rain",
+  "horizonworld.weather.heavy_rain":       "Heavy Rain",
+  "horizonworld.weather.thunderstorm":     "Thunderstorm",
+  "horizonworld.weather.snow":             "Snowfall",
+  "horizonworld.weather.blizzard":         "Blizzard",
+  "horizonworld.weather.hail":             "Hailstorm",
+  "horizonworld.weather.fog":              "Dense Fog",
+  "horizonworld.weather.hurricane":        "Hurricane",
+  "horizonworld.weather.tornado":          "Tornado",
+  "horizonworld.weather.monsoon":          "Monsoon",
+  "horizonworld.weather.dust_storm":       "Dust Storm",
+  "horizonworld.weather.volcanic_ash_fall":"Ash Fall",
+
+  "horizonworld.disaster.earthquake":       "Earthquake",
+  "horizonworld.disaster.volcanic_eruption":"Volcanic Eruption",
+  "horizonworld.disaster.tsunami":          "Tsunami",
+  "horizonworld.disaster.flood":            "Flood",
+  "horizonworld.disaster.drought":          "Drought",
+  "horizonworld.disaster.wildfire":         "Wildfire",
+  "horizonworld.disaster.avalanche":        "Avalanche",
+  "horizonworld.disaster.landslide":        "Landslide",
+  "horizonworld.disaster.hurricane_landfall":"Hurricane Landfall",
+
+  "horizonworld.disaster.phase.precursor":  "Warning",
+  "horizonworld.disaster.phase.active":     "Active",
+  "horizonworld.disaster.phase.peak":       "Peak Intensity",
+  "horizonworld.disaster.phase.waning":     "Subsiding",
+  "horizonworld.disaster.phase.aftermath":  "Aftermath",
+
+  "horizonworld.disaster.warning.title":    "⚠ Disaster Warning",
+  "horizonworld.disaster.warning.desc":     "A %s is approaching. Seek shelter within %d seconds.",
+
+  "horizonworld.ecology.soil.loam":         "Loam Soil",
+  "horizonworld.ecology.soil.clay":         "Clay Soil",
+  "horizonworld.ecology.soil.sand":         "Sandy Soil",
+  "horizonworld.ecology.soil.peat":         "Peat Soil",
+  "horizonworld.ecology.soil.volcanic":     "Volcanic Soil",
+  "horizonworld.ecology.soil.permafrost":   "Permafrost",
+
+  "horizonworld.continent.ferrum":          "Ferrum Continent",
+  "horizonworld.continent.aurum":           "Aurum Continent",
+  "horizonworld.continent.petra":           "Petra Continent",
+  "horizonworld.continent.glacius":         "Glacius Continent",
+  "horizonworld.continent.rara":            "Rara Continent",
+  "horizonworld.continent.ardor":           "Ardor Continent",
+  "horizonworld.continent.lacus":           "Lacus Archipelago",
+
+  "hud.horizonworld.temperature":          "%s°C",
+  "hud.horizonworld.season":               "%s — Day %d",
+  "hud.horizonworld.weather":              "%s",
+  "hud.horizonworld.wind":                 "Wind: %d km/h",
+
+  "config.horizonworld.title":             "HorizonWorld Configuration",
+  "config.horizonworld.continent_count":   "Continent Count",
+  "config.horizonworld.ocean_fraction":    "Ocean Fraction",
+  "config.horizonworld.sea_level":         "Sea Level",
+  "config.horizonworld.days_per_season":   "Days Per Season",
+  "config.horizonworld.enable_disasters":  "Enable Disasters",
+  "config.horizonworld.disaster_frequency":"Disaster Frequency",
+  "config.horizonworld.enable_ecology":    "Enable Ecology",
+
+  "advancements.horizonworld.root.title":           "A Living World",
+  "advancements.horizonworld.root.desc":            "Stand upon the surface of a geologically-accurate planet.",
+  "advancements.horizonworld.first_disaster.title": "Force of Nature",
+  "advancements.horizonworld.first_disaster.desc":  "Survive your first natural disaster.",
+  "advancements.horizonworld.all_seasons.title":    "Four Seasons",
+  "advancements.horizonworld.all_seasons.desc":     "Live through all four seasons.",
+  "advancements.horizonworld.all_zones.title":      "World Traveller",
+  "advancements.horizonworld.all_zones.desc":       "Visit all five climate zones.",
+  "advancements.horizonworld.volcano.title":        "Pyroclastic Survivor",
+  "advancements.horizonworld.volcano.desc":         "Survive a volcanic eruption within 200 blocks of the vent.",
+  "advancements.horizonworld.hurricane.title":      "Eye of the Storm",
+  "advancements.horizonworld.hurricane.desc":       "Stand in the eye of a hurricane.",
+  "advancements.horizonworld.kimberlite.title":     "From the Deep",
+  "advancements.horizonworld.kimberlite.desc":      "Discover a kimberlite pipe.",
+  "advancements.horizonworld.polar.title":          "Permafrost Pioneer",
+  "advancements.horizonworld.polar.desc":           "Build a shelter in the polar climate zone.",
+  "advancements.horizonworld.ecology.title":        "Tipping Point",
+  "advancements.horizonworld.ecology.desc":         "Witness an ecological imbalance cascade event."
+}
+```
+
+---
+
+## 22. build.gradle
+
+```gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version   = '1.0.0'
+group     = 'com.horizonpack.horizonworld'
+
+ext {
+    mod_id            = 'horizonworld'
+    neoforge_version  = '21.1.172'
+    minecraft_version = '1.21.1'
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+minecraft {
+    accessTransformers { file('src/main/resources/META-INF/accesstransformer.cfg') }
+}
+
+runs {
+    configureEach {
+        systemProperty 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    client {
+        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+    }
+    server {
+        programArgument '--nogui'
+    }
+    gameTestServer {
+        programArgument '--nogui'
+    }
+    data {
+        programArguments.addAll '--mod', project.mod_id,
+            '--all',
+            '--output', file('src/generated/resources/').getAbsolutePath(),
+            '--existing', file('src/main/resources/').getAbsolutePath()
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+repositories {
+    maven { url 'https://maven.neoforged.net/releases' }
+    maven { url 'https://maven.horizonpack.com/releases' }
+}
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neoforge_version}"
+
+    // Required dependencies
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
+    testRuntimeOnly    'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+}
+
+tasks.withType(ProcessResources).configureEach {
+    inputs.property 'version', project.version
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(project.properties)
+    }
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title'      : 'horizonworld',
+            'Specification-Version'    : '1',
+            'Implementation-Title'     : project.name,
+            'Implementation-Version'   : project.jar.archiveVersion,
+            'Implementation-Timestamp' : new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+}
+
+test { useJUnitPlatform() }
+```
+
+**`gradle.properties`**
+```properties
+neo_version       = 21.1.172
+minecraft_version = 1.21.1
+mod_version       = 1.0.0
+mod_id            = horizonworld
+```
+
+---
+
+## 23. neoforge.mods.toml
+
+```toml
+modLoader    = "javafml"
+loaderVersion = "[2,)"
+license      = "MIT"
+
+[[mods]]
+    modId       = "horizonworld"
+    version     = "1.0.0"
+    displayName = "HorizonWorld"
+    description = '''
+        The planetary engine for the Horizon Corebreach modpack.
+        Provides tectonic-driven continent generation, geological strata, a multi-pass chunk
+        generator, Koppen climate zones, a spatial weather engine with 13 weather types,
+        a 4-season system, 9 natural disaster types with multi-phase progression, and a
+        per-biome ecology balance tracker. Required by HorizonBiome, HorizonPower,
+        HorizonEconomy, and HorizonSociety.
+    '''
+    authors       = "HorizonPack Team"
+    displayURL    = "https://modrinth.com/mod/horizonworld"
+    logoFile      = "horizonworld.png"
+    updateJSONURL = "https://horizonpack.com/updates/horizonworld.json"
+
+[[dependencies.horizonworld]]
+    modId        = "neoforge"
+    type         = "required"
+    versionRange = "[21.1,22)"
+    ordering     = "NONE"
+    side         = "BOTH"
+
+[[dependencies.horizonworld]]
+    modId        = "minecraft"
+    type         = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering     = "NONE"
+    side         = "BOTH"
+
+[[dependencies.horizonworld]]
+    modId        = "horizoncore"
+    type         = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering     = "AFTER"
+    side         = "BOTH"
+
+[[dependencies.horizonworld]]
+    modId        = "horizondata"
+    type         = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering     = "AFTER"
+    side         = "BOTH"
+
+[[mixins]]
+    config = "horizonworld.mixins.json"
+```
+
+**`horizonworld.mixins.json`**
+```json
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.horizonpack.horizonworld.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "MixinLevelRenderer",
+    "MixinWeatherEffects",
+    "MixinClientLevel"
+  ],
+  "client": [
+    "MixinGameRenderer"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
+```
+
+---
+
+## 24. Critical Implementation Notes
+
+### 24.1 Chunk Generator Registration
+`HorizonChunkGenerator` must be registered via `DeferredRegister` of `BuiltInRegistries.CHUNK_GENERATOR` **and** its `MapCodec` must be added to the codec registry during `FMLCommonSetupEvent`. Without codec registration, the generator cannot be serialized to `level.dat` and will fail on world load:
+
+```java
+// In WorldRegistries.registerChunkGeneratorCodec():
+Registry.register(BuiltInRegistries.CHUNK_GENERATOR,
+    ResourceLocation.fromNamespaceAndPath(HorizonWorld.MODID, "main"),
+    HorizonChunkGenerator.CODEC);
+```
+
+The dimension JSON at `data/horizonworld/dimension/overworld.json` must reference this generator type explicitly. Players who install HorizonWorld on an existing world will get hybrid terrain — new chunks use the Horizon generator, old chunks retain vanilla geometry. A startup warning is logged if existing level data does not match.
+
+### 24.2 Planet Seed Independence
+`ContinentMap` is generated from `continentSeed` (stored in `WorldGenSettings`), which is **derived from, but not identical to**, the Minecraft world seed. This means the continent layout is stable across sessions. Never re-generate `ContinentMap` after world creation — always load from `PlanetData`. The `PlanetData.get()` call returns the saved map; `ContinentMaskPass` reads from it rather than re-running the Voronoi algorithm.
+
+### 24.3 Thread Safety in ChunkGenerator
+`fillFromNoise` is called on worker threads from `Util.backgroundExecutor()`. All objects it touches must be either:
+- **Immutable** (`WorldGenSettings`, `GeologyProfile`, `ContinentMap`)
+- **Thread-local** (per-call `RandomSource` instances)
+- **Read-only after init** (`ContinentMap` cells are written only during world creation, then frozen)
+
+Never call `PlanetData.get(level)` from within `fillFromNoise` — `SavedData` access requires the server thread. Instead, pass the `ContinentMap` reference into the pass constructors before the worker threads start.
+
+### 24.4 Weather Suppression of Vanilla Rain
+Vanilla Minecraft's rain system (`ServerLevel.setWeatherParameters`) will conflict with the Weather Engine. Use a Mixin on `ServerLevel.tickChunk` and `ClientLevel.getRainLevel` to read from `WeatherClientState` instead of vanilla weather flags. The Mixin targets are:
+- `MixinClientLevel.getRainLevel()` — returns intensity from `WeatherClientState`
+- `MixinLevelRenderer.renderRain()` — replaced with `WeatherRenderer.render()` which dispatches on `WeatherType`
+- `MixinWeatherEffects` — suppresses the vanilla rain/thunder sound loop so `WeatherSoundManager` can manage ambient sounds
+
+Set `level.setWeatherParameters(0, 0, false, false)` once on world load to ensure vanilla rain is permanently suppressed server-side.
+
+### 24.5 Disaster Performance Budget
+Each `DisasterInstance` at `PEAK` phase runs `applyPeakEffects()` every tick. With up to 3 simultaneous disasters (configurable), this is at most 3 × 5–10 block-set operations per tick — acceptable. However, `DisasterEngine.maybeSpawnDisaster()` runs only every `CHECK_INTERVAL` (200) ticks and iterates all tectonic plates. Keep `plate.boundaries()` lists short (≤ 10 per plate) or cache the boundary epicenter list.
+
+The aftermath phase (`applyAftermath()`) must complete in a single tick. Pre-compute the list of positions to modify during `WANING` phase and store it in `DisasterInstance`. The aftermath method then drains the precomputed list in batches of 50 blocks per tick until empty, then transitions to `FINISHED`.
+
+### 24.6 ClimateCache Invalidation Strategy
+`ClimateEngine` uses a chunk-keyed LRU cache. Invalidation triggers:
+- **Season change** (`SeasonChangeEvent`) — full cache wipe via `invalidateAll()`
+- **Disaster aftermath** (`DisasterEndEvent`) — invalidate all chunks within `effectRadius / 16` of epicenter
+- **Player-placed/broken blocks above Y=100** — do not invalidate (elevation approximation tolerance is ±4 blocks)
+- **Permafrost thaw** — invalidate the specific chunk
+
+The cache is `ConcurrentHashMap`-backed with an explicit capacity limit of 4096 entries. `ClimateCache.get()` and `put()` are synchronized at the bucket level. Do not call `ClimateEngine.getSnapshot()` during `fillFromNoise()` (worker thread) — use the direct latitude computation in `ElevationPass` for climate hints during generation.
+
+### 24.7 Biome Source and Climate Mapping
+`HorizonBiomeSource` overrides `getNoiseBiome(x, y, z, sampler)`. It reads the `ContinentMap` for the (x, z) position, determines the `ClimateZone` via `LatLonUtil.toLatLon()`, then looks up the biome using a `ClimateZone → List<Biome>` map weighted by elevation and humidity noise. The biome list is built during `FMLCommonSetupEvent` from all registered biomes that carry a `climate_zone` JSON field (see §17.3).
+
+HorizonBiome registers its flora/fauna biomes using this same system — it adds entries to the `ClimateZone → biome` weighting table via HorizonWorld's `BiomeZoneRegistry.registerBiome(climateZone, biomeHolder, weight)` API.
+
+### 24.8 Ecology Profile Persistence
+`EcologyEngine.profiles` is an in-memory `ConcurrentHashMap` and is **not persisted** between sessions. On world load, profiles are recomputed lazily on first chunk access. Initial values are computed from:
+- Biome's base ecology template (defined in the biome JSON as `"ecology_base"` extension fields)
+- Entity count scan on chunk load (`ChunkEvent.Load`) — counts living entities in the chunk and normalizes to predator/prey ratios
+
+This is intentional: ecology state that was "good" when the player left will reset to the biome default on reload. If you need persistence, add `EcologyProfile` serialization to `PlanetData` using a chunk-key → NBT map.
+
+### 24.9 Adding New Disaster Types from Sub-Mods
+Sub-mods can add disaster types by:
+1. Extending `DisasterType` — not possible (it's an enum). Instead, sub-mods fire `DisasterStartEvent` themselves with a `DisasterInstance` whose type is one of the 9 core types, customized via severity and epicenter.
+2. For truly new visual/mechanical disasters, listen to `DisasterPhaseEvent` for `ACTIVE` and `PEAK` phases and add custom block-set logic. `DisasterEngine` will handle phase progression automatically.
+3. Register a precondition checker via `DisasterEngine.registerPreconditionChecker(DisasterType, BiPredicate<ServerLevel, PlanetData>)` if the new disaster needs custom geographic conditions.
+
+### 24.10 Data Generation
+`DataGenerator` classes for HorizonWorld:
+- `ContinentDefinitionProvider` — generates JSON for all 7 default continents
+- `GeologyProfileProvider` — generates JSON for all 7 geology profiles
+- `WorldBlockStateProvider` — generates blockstate + model JSONs for all 11 world-specific blocks
+- `WorldLootTableProvider` — generates loot tables for all 11 blocks
+- `WorldTagProvider` — generates `geological_surface`, `disaster_blocks`, `flammable_terrain`, and `c:` namespace tags
+- `WorldAdvancementProvider` — generates all 10 advancements
+
+Run `./gradlew runData` before building the jar. Generated resources land in `src/generated/resources/` which is included in the `sourceSets.main.resources` source set.
+
+---
+
+*End of HorizonWorld Detailed Specification.*  
+*Next: `04_HorizonBiome_Detailed.md` — Flora/Crops, Fauna/Animals, Microbiology/Diseases*

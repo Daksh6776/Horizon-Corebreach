@@ -1,0 +1,1467 @@
+HorizonMilitary — Detailed Technical Specification
+Mod ID: horizonmilitary
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Armies, Warfare, Formations, Sieges, Logistics, Crime, Law Enforcement, and Disaster Response
+Absorbed mods: HorizonMilitary, HorizonCrime, HorizonEmergency
+Depends on: horizoncore, horizondata, horizonsociety, horizonpower
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Weapon Registry & Implementation
+Fortification Registry & Implementation
+Siege Equipment Registry & Implementation
+Military Unit Registry & Implementation
+Crime & Justice System
+Emergency & Disaster Response System
+Combat & Formation Engine
+Logistics & Supply Engine
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonMilitary introduces a highly advanced warfare, justice, and emergency response simulation to the Horizon Corebreach modpack.
+It replaces vanilla combat interactions with disciplined armies, strategic sieges, supply lines, and organized crime networks.
+Warfare & Armies: 18 distinct military unit types ranging from ancient militia to modern special forces. Units operate in strict formations utilizing 19 specific weapon types.
+Sieges & Fortifications: 10 tiers of defensive structures and 8 distinct siege engines. Destructibility is governed by the structural integrity engine from HorizonData.
+Logistics: Armies suffer attrition without supply lines. Ammunition, food, and medical supplies must be transported to the front lines.
+Crime & Justice: 10 defined crime types with detection, punishment, and recidivism mechanics. Settlements spawn thieves, smugglers, and syndicates based on poverty and stability.
+Emergency Response: Firefighters, paramedics, and disaster relief systems that react to events fired by HorizonWorld's DisasterEngine.
+2. File & Package Structure
+code
+Text
+horizon_military/
+├── src/main/java/com/horizonpack/horizonmilitary/
+│   ├── core/
+│   │   ├── HorizonMilitary.java
+│   │   ├── MilitaryRegistries.java
+│   │   └── MilitaryConfig.java
+│   ├── data/
+│   │   ├── CrimeType.java
+│   │   └── MilitarySavedData.java
+│   ├── blocks/
+│   │   ├── FortificationBlock.java
+│   │   ├── DefensiveTowerBlock.java
+│   │   ├── FacilityBlock.java
+│   │   └── registry/
+│   │       └── FortificationRegistry.java
+│   ├── items/
+│   │   ├── MeleeWeaponItem.java
+│   │   ├── FirearmItem.java
+│   │   ├── HeavyWeaponItem.java
+│   │   └── registry/
+│   │       └── WeaponRegistry.java
+│   ├── entities/
+│   │   ├── units/
+│   │   │   ├── MilitaryUnitEntity.java
+│   │   │   └── registry/
+│   │   │       └── UnitRegistry.java
+│   │   ├── siege/
+│   │   │   ├── SiegeEntity.java
+│   │   │   └── registry/
+│   │   │       └── SiegeRegistry.java
+│   │   └── emergency/
+│   │       ├── FirefighterEntity.java
+│   │       └── ParamedicEntity.java
+│   ├── blockentities/
+│   │   ├── BarracksBlockEntity.java
+│   │   ├── PoliceStationBlockEntity.java
+│   │   └── FireStationBlockEntity.java
+│   ├── systems/
+│   │   ├── FormationManager.java
+│   │   ├── LogisticsEngine.java
+│   │   ├── CrimeEngine.java
+│   │   └── EmergencyEngine.java
+│   ├── ai/
+│   │   ├── FormationMoveGoal.java
+│   │   ├── SiegeAttackGoal.java
+│   │   ├── PatrolRouteGoal.java
+│   │   └── ExtinguishFireGoal.java
+│   ├── events/
+│   │   ├── MilitaryEventHandlers.java
+│   │   └── custom/
+│   │       ├── CrimeCommittedEvent.java
+│   │       ├── UnitCasualtyEvent.java
+│   │       └── SiegeBreachEvent.java
+│   ├── network/
+│   │   ├── MilitaryPacketHandler.java
+│   │   └── packets/
+│   │       ├── FormationCommandPacket.java
+│   │       └── CrimeAlertPacket.java
+│   ├── client/
+│   │   ├── render/
+│   │   │   ├── MilitaryUnitRenderer.java
+│   │   │   └── SiegeEquipmentRenderer.java
+│   │   └── gui/
+│   │       ├── BarracksScreen.java
+│   │       └── PoliceStationScreen.java
+│   └── utils/
+│       ├── BallisticsMath.java
+│       └── LineOfSightUtil.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonmilitary/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonmilitary/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonMilitary.java
+code
+Java
+package com.horizonpack.horizonmilitary.core;
+
+import com.horizonpack.horizonmilitary.blocks.registry.FortificationRegistry;
+import com.horizonpack.horizonmilitary.entities.siege.registry.SiegeRegistry;
+import com.horizonpack.horizonmilitary.entities.units.registry.UnitRegistry;
+import com.horizonpack.horizonmilitary.events.MilitaryEventHandlers;
+import com.horizonpack.horizonmilitary.items.registry.WeaponRegistry;
+import com.horizonpack.horizonmilitary.network.MilitaryPacketHandler;
+import com.horizonpack.horizonmilitary.systems.CrimeEngine;
+import com.horizonpack.horizonmilitary.systems.EmergencyEngine;
+import com.horizonpack.horizonmilitary.systems.FormationManager;
+import com.horizonpack.horizonmilitary.systems.LogisticsEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonMilitary.MODID)
+public class HorizonMilitary {
+    public static final String MODID = "horizonmilitary";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonMilitary(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, MilitaryConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, MilitaryConfig.CLIENT_SPEC);
+
+        MilitaryRegistries.BLOCKS.register(modEventBus);
+        MilitaryRegistries.ITEMS.register(modEventBus);
+        MilitaryRegistries.BLOCK_ENTITIES.register(modEventBus);
+        MilitaryRegistries.ENTITY_TYPES.register(modEventBus);
+        MilitaryRegistries.MENU_TYPES.register(modEventBus);
+        MilitaryRegistries.CRIME_TYPES.register(modEventBus);
+        MilitaryRegistries.DATA_COMPONENT_TYPES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(MilitaryRegistries::registerNewRegistries);
+        modEventBus.addListener(UnitRegistry::registerEntityAttributes);
+        modEventBus.addListener(SiegeRegistry::registerEntityAttributes);
+        modEventBus.addListener(MilitaryPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(MilitaryEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            CrimeEngine.init();
+            FormationManager.init();
+            LogisticsEngine.init();
+            EmergencyEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/MilitaryRegistries.java
+code
+Java
+package com.horizonpack.horizonmilitary.core;
+
+import com.horizonpack.horizonmilitary.data.CrimeType;
+import net.minecraft.core.Registry;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class MilitaryRegistries {
+
+    public static final ResourceKey<Registry<CrimeType>> CRIME_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonMilitary.MODID, "crime_types"));
+
+    public static final DeferredRegister<CrimeType> CRIME_TYPES = DeferredRegister.create(CRIME_KEY, HorizonMilitary.MODID);
+    
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonMilitary.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonMilitary.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonMilitary.MODID);
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(BuiltInRegistries.ENTITY_TYPE, HorizonMilitary.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(BuiltInRegistries.MENU, HorizonMilitary.MODID);
+    public static final DeferredRegister<DataComponentType<?>> DATA_COMPONENT_TYPES = DeferredRegister.create(BuiltInRegistries.DATA_COMPONENT_TYPE, HorizonMilitary.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(CRIME_KEY).sync(true));
+    }
+}
+5. Weapon Registry & Implementation
+File: items/registry/WeaponRegistry.java
+code
+Java
+package com.horizonpack.horizonmilitary.items.registry;
+
+import com.horizonpack.horizonmilitary.core.MilitaryRegistries;
+import com.horizonpack.horizonmilitary.items.FirearmItem;
+import com.horizonpack.horizonmilitary.items.HeavyWeaponItem;
+import com.horizonpack.horizonmilitary.items.MeleeWeaponItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Tiers;
+import net.neoforged.neoforge.registries.DeferredItem;
+
+public class WeaponRegistry {
+
+    private static Item.Properties weaponProps() {
+        return new Item.Properties().stacksTo(1);
+    }
+
+    // ── MELEE WEAPONS ─────────────────────────────────────────────────────────
+    public static final DeferredItem<Item> CLUB = MilitaryRegistries.ITEMS.register("club", 
+        () -> new MeleeWeaponItem(Tiers.WOOD, 4, -3.0F, weaponProps()));
+    public static final DeferredItem<Item> SPEAR = MilitaryRegistries.ITEMS.register("spear", 
+        () -> new MeleeWeaponItem(Tiers.WOOD, 3, -2.6F, weaponProps()));
+    public static final DeferredItem<Item> FLINT_KNIFE = MilitaryRegistries.ITEMS.register("flint_knife", 
+        () -> new MeleeWeaponItem(Tiers.STONE, 2, -1.8F, weaponProps()));
+    public static final DeferredItem<Item> COPPER_SWORD = MilitaryRegistries.ITEMS.register("copper_sword", 
+        () -> new MeleeWeaponItem(Tiers.STONE, 4, -2.4F, weaponProps())); // HorizonData copper tier equivalent
+    public static final DeferredItem<Item> BRONZE_SWORD = MilitaryRegistries.ITEMS.register("bronze_sword", 
+        () -> new MeleeWeaponItem(Tiers.IRON, 5, -2.4F, weaponProps()));
+    public static final DeferredItem<Item> IRON_SWORD = MilitaryRegistries.ITEMS.register("iron_sword", 
+        () -> new MeleeWeaponItem(Tiers.IRON, 6, -2.4F, weaponProps()));
+    public static final DeferredItem<Item> STEEL_SWORD = MilitaryRegistries.ITEMS.register("steel_sword", 
+        () -> new MeleeWeaponItem(Tiers.DIAMOND, 7, -2.4F, weaponProps()));
+
+    // ── RANGED / FIREARMS ─────────────────────────────────────────────────────
+    public static final DeferredItem<Item> CROSSBOW = MilitaryRegistries.ITEMS.register("crossbow", 
+        () -> new net.minecraft.world.item.CrossbowItem(weaponProps())); // Vanilla extension
+    public static final DeferredItem<Item> LONGBOW = MilitaryRegistries.ITEMS.register("longbow", 
+        () -> new net.minecraft.world.item.BowItem(weaponProps().durability(500)));
+    
+    public static final DeferredItem<Item> MUSKET = MilitaryRegistries.ITEMS.register("musket", 
+        () -> new FirearmItem(weaponProps().durability(250), 15.0f, 100, 1, 0.05f)); // damage, reloadTicks, magSize, accuracy
+    public static final DeferredItem<Item> RIFLE = MilitaryRegistries.ITEMS.register("rifle", 
+        () -> new FirearmItem(weaponProps().durability(600), 20.0f, 60, 5, 0.02f));
+    public static final DeferredItem<Item> SNIPER_RIFLE = MilitaryRegistries.ITEMS.register("sniper_rifle", 
+        () -> new FirearmItem(weaponProps().durability(800), 45.0f, 80, 5, 0.001f));
+    public static final DeferredItem<Item> MACHINE_GUN = MilitaryRegistries.ITEMS.register("machine_gun", 
+        () -> new FirearmItem(weaponProps().durability(1500), 12.0f, 5, 100, 0.08f));
+    
+    // ── HEAVY WEAPONS / EXPLOSIVES ────────────────────────────────────────────
+    public static final DeferredItem<Item> ROCKET_LAUNCHER = MilitaryRegistries.ITEMS.register("rocket_launcher", 
+        () -> new HeavyWeaponItem(weaponProps().durability(100), "rocket", 4.0f)); // ammoType, explosionRadius
+    public static final DeferredItem<Item> CANNON = MilitaryRegistries.ITEMS.register("cannon", 
+        () -> new HeavyWeaponItem(weaponProps().durability(200), "cannonball", 5.0f));
+    public static final DeferredItem<Item> FIELD_ARTILLERY = MilitaryRegistries.ITEMS.register("field_artillery", 
+        () -> new HeavyWeaponItem(weaponProps().durability(300), "artillery_shell", 8.0f));
+    public static final DeferredItem<Item> NAVAL_CANNON = MilitaryRegistries.ITEMS.register("naval_cannon", 
+        () -> new HeavyWeaponItem(weaponProps().durability(500), "heavy_shell", 12.0f));
+    public static final DeferredItem<Item> TORPEDO = MilitaryRegistries.ITEMS.register("torpedo", 
+        () -> new HeavyWeaponItem(weaponProps().durability(50), "torpedo_tube", 15.0f));
+    public static final DeferredItem<Item> BOMB = MilitaryRegistries.ITEMS.register("bomb", 
+        () -> new HeavyWeaponItem(weaponProps().durability(10), "fuse", 6.0f));
+
+    public static void init() {}
+}
+Total Weapons registered: 19
+6. Fortification Registry & Implementation
+File: blocks/registry/FortificationRegistry.java
+code
+Java
+package com.horizonpack.horizonmilitary.blocks.registry;
+
+import com.horizonpack.horizonmilitary.blocks.DefensiveTowerBlock;
+import com.horizonpack.horizonmilitary.blocks.FortificationBlock;
+import com.horizonpack.horizonmilitary.core.MilitaryRegistries;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
+
+public class FortificationRegistry {
+
+    private static BlockBehaviour.Properties fortProps(MapColor color, float strength, float blastResist, SoundType sound) {
+        return BlockBehaviour.Properties.of().mapColor(color).strength(strength, blastResist).sound(sound).requiresCorrectToolForDrops();
+    }
+
+    // ── WALLS & BARRIERS ──────────────────────────────────────────────────────
+    public static final DeferredBlock<Block> WOODEN_PALISADE = MilitaryRegistries.BLOCKS.registerBlock("wooden_palisade", 
+        () -> new FortificationBlock(fortProps(MapColor.WOOD, 2.0f, 3.0f, SoundType.WOOD), 500)); // 500 structural HP
+    public static final DeferredBlock<Block> STONE_WALL = MilitaryRegistries.BLOCKS.registerBlock("stone_wall", 
+        () -> new FortificationBlock(fortProps(MapColor.STONE, 4.0f, 6.0f, SoundType.STONE), 2000));
+    public static final DeferredBlock<Block> CASTLE_WALL = MilitaryRegistries.BLOCKS.registerBlock("castle_wall", 
+        () -> new FortificationBlock(fortProps(MapColor.STONE, 8.0f, 12.0f, SoundType.DEEPSLATE_BRICKS), 8000));
+    public static final DeferredBlock<Block> REINFORCED_WALL = MilitaryRegistries.BLOCKS.registerBlock("reinforced_wall", 
+        () -> new FortificationBlock(fortProps(MapColor.METAL, 15.0f, 1200.0f, SoundType.METAL), 25000));
+    public static final DeferredBlock<Block> CONCRETE_BUNKER = MilitaryRegistries.BLOCKS.registerBlock("concrete_bunker", 
+        () -> new FortificationBlock(fortProps(MapColor.COLOR_LIGHT_GRAY, 25.0f, 3600.0f, SoundType.STONE), 50000));
+
+    // ── TOWERS & ACTIVE DEFENSES ──────────────────────────────────────────────
+    public static final DeferredBlock<Block> GUARD_TOWER = MilitaryRegistries.BLOCKS.registerBlock("guard_tower", 
+        () -> new DefensiveTowerBlock(fortProps(MapColor.WOOD, 3.0f, 4.0f, SoundType.WOOD), "melee_guard"));
+    public static final DeferredBlock<Block> ARCHER_TOWER = MilitaryRegistries.BLOCKS.registerBlock("archer_tower", 
+        () -> new DefensiveTowerBlock(fortProps(MapColor.STONE, 6.0f, 8.0f, SoundType.STONE), "archer"));
+    public static final DeferredBlock<Block> CANNON_TOWER = MilitaryRegistries.BLOCKS.registerBlock("cannon_tower", 
+        () -> new DefensiveTowerBlock(fortProps(MapColor.STONE, 10.0f, 15.0f, SoundType.DEEPSLATE_BRICKS), "artillery"));
+    public static final DeferredBlock<Block> ANTI_AIR_GUN = MilitaryRegistries.BLOCKS.registerBlock("anti_air_gun", 
+        () -> new DefensiveTowerBlock(fortProps(MapColor.METAL, 12.0f, 600.0f, SoundType.METAL), "anti_air"));
+    public static final DeferredBlock<Block> RADAR_STATION = MilitaryRegistries.BLOCKS.registerBlock("radar_station", 
+        () -> new DefensiveTowerBlock(fortProps(MapColor.METAL, 10.0f, 300.0f, SoundType.METAL), "radar"));
+
+    static {
+        // Auto-register BlockItems
+        MilitaryRegistries.BLOCKS.getEntries().forEach(block -> 
+            MilitaryRegistries.ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+    }
+
+    public static void init() {}
+}
+Total Fortifications registered: 10
+7. Siege Equipment Registry & Implementation
+File: entities/siege/registry/SiegeRegistry.java
+code
+Java
+package com.horizonpack.horizonmilitary.entities.siege.registry;
+
+import com.horizonpack.horizonmilitary.core.MilitaryRegistries;
+import com.horizonpack.horizonmilitary.entities.siege.SiegeEntity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public class SiegeRegistry {
+
+    private static DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> register(String name, float width, float height) {
+        return MilitaryRegistries.ENTITY_TYPES.register(name, 
+            () -> EntityType.Builder.<SiegeEntity>of(SiegeEntity::new, MobCategory.MISC).sized(width, height).build(name));
+    }
+
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> BATTERING_RAM = register("battering_ram", 2.0f, 2.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> SIEGE_TOWER = register("siege_tower", 4.0f, 8.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> CATAPULT = register("catapult", 3.0f, 3.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> TREBUCHET = register("trebuchet", 5.0f, 10.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> BALLISTA = register("ballista", 2.5f, 2.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> CANNON_SIEGE = register("cannon_siege", 2.5f, 2.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> MORTAR_SIEGE = register("mortar_siege", 2.0f, 1.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SiegeEntity>> TUNNEL_BORE = register("tunnel_bore", 3.0f, 3.0f);
+
+    public static void registerEntityAttributes(EntityAttributeCreationEvent event) {
+        AttributeSupplier.Builder siegeProps = SiegeEntity.createAttributes()
+            .add(Attributes.MAX_HEALTH, 300.0D)
+            .add(Attributes.MOVEMENT_SPEED, 0.1D)
+            .add(Attributes.KNOCKBACK_RESISTANCE, 1.0D);
+
+        event.put(BATTERING_RAM.get(), siegeProps.build());
+        event.put(SIEGE_TOWER.get(), siegeProps.build());
+        event.put(CATAPULT.get(), siegeProps.build());
+        event.put(TREBUCHET.get(), siegeProps.build());
+        event.put(BALLISTA.get(), siegeProps.build());
+        event.put(CANNON_SIEGE.get(), siegeProps.build());
+        event.put(MORTAR_SIEGE.get(), siegeProps.build());
+        event.put(TUNNEL_BORE.get(), siegeProps.build());
+    }
+}
+Total Siege Equipment registered: 8
+8. Military Unit Registry & Implementation
+File: entities/units/registry/UnitRegistry.java
+code
+Java
+package com.horizonpack.horizonmilitary.entities.units.registry;
+
+import com.horizonpack.horizonmilitary.core.MilitaryRegistries;
+import com.horizonpack.horizonmilitary.entities.units.MilitaryUnitEntity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public class UnitRegistry {
+
+    private static DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> register(String name) {
+        return MilitaryRegistries.ENTITY_TYPES.register(name, 
+            () -> EntityType.Builder.<MilitaryUnitEntity>of(MilitaryUnitEntity::new, MobCategory.CREATURE).sized(0.6f, 1.95f).build(name));
+    }
+
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> MILITIA = register("militia");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> SPEARMAN = register("spearman");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> SWORDSMAN = register("swordsman");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> PIKEMAN = register("pikeman");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> ARCHER = register("archer");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> CROSSBOWMAN = register("crossbowman");
+    
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> CAVALRY_LIGHT = MilitaryRegistries.ENTITY_TYPES.register("cavalry_light", 
+            () -> EntityType.Builder.<MilitaryUnitEntity>of(MilitaryUnitEntity::new, MobCategory.CREATURE).sized(1.4f, 2.5f).build("cavalry_light"));
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> CAVALRY_HEAVY = MilitaryRegistries.ENTITY_TYPES.register("cavalry_heavy", 
+            () -> EntityType.Builder.<MilitaryUnitEntity>of(MilitaryUnitEntity::new, MobCategory.CREATURE).sized(1.5f, 2.6f).build("cavalry_heavy"));
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> KNIGHT = register("knight");
+    
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> SIEGE_ENGINEER = register("siege_engineer");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> RIFLEMAN = register("rifleman");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> ARTILLERY_CREW = register("artillery_crew");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> TANK_CREW = register("tank_crew");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> PILOT = register("pilot");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> NAVAL_OFFICER = register("naval_officer");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> SPECIAL_FORCES = register("special_forces");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> SPY_UNIT = register("spy_unit");
+    public static final DeferredHolder<EntityType<?>, EntityType<MilitaryUnitEntity>> MEDIC = register("medic");
+
+    public static void registerEntityAttributes(EntityAttributeCreationEvent event) {
+        AttributeSupplier.Builder baseSoldier = MilitaryUnitEntity.createAttributes()
+            .add(Attributes.MAX_HEALTH, 20.0D)
+            .add(Attributes.MOVEMENT_SPEED, 0.3D)
+            .add(Attributes.ATTACK_DAMAGE, 3.0D)
+            .add(Attributes.ARMOR, 2.0D);
+
+        AttributeSupplier.Builder heavySoldier = MilitaryUnitEntity.createAttributes()
+            .add(Attributes.MAX_HEALTH, 40.0D)
+            .add(Attributes.MOVEMENT_SPEED, 0.2D)
+            .add(Attributes.ATTACK_DAMAGE, 6.0D)
+            .add(Attributes.ARMOR, 10.0D)
+            .add(Attributes.KNOCKBACK_RESISTANCE, 0.5D);
+
+        event.put(MILITIA.get(), baseSoldier.build());
+        event.put(SPEARMAN.get(), baseSoldier.build());
+        event.put(SWORDSMAN.get(), heavySoldier.build());
+        event.put(PIKEMAN.get(), baseSoldier.build());
+        event.put(ARCHER.get(), baseSoldier.build());
+        event.put(CROSSBOWMAN.get(), baseSoldier.build());
+        
+        event.put(CAVALRY_LIGHT.get(), baseSoldier.add(Attributes.MOVEMENT_SPEED, 0.5D).build());
+        event.put(CAVALRY_HEAVY.get(), heavySoldier.add(Attributes.MOVEMENT_SPEED, 0.4D).build());
+        event.put(KNIGHT.get(), heavySoldier.build());
+        
+        event.put(SIEGE_ENGINEER.get(), baseSoldier.build());
+        event.put(RIFLEMAN.get(), baseSoldier.build());
+        event.put(ARTILLERY_CREW.get(), baseSoldier.build());
+        event.put(TANK_CREW.get(), baseSoldier.build());
+        event.put(PILOT.get(), baseSoldier.build());
+        event.put(NAVAL_OFFICER.get(), baseSoldier.build());
+        event.put(SPECIAL_FORCES.get(), heavySoldier.add(Attributes.MOVEMENT_SPEED, 0.35D).add(Attributes.ATTACK_DAMAGE, 8.0D).build());
+        event.put(SPY_UNIT.get(), baseSoldier.add(Attributes.MOVEMENT_SPEED, 0.4D).build());
+        event.put(MEDIC.get(), baseSoldier.build());
+    }
+}
+Total Military Units registered: 18
+9. Crime & Justice System
+File: data/CrimeType.java
+code
+Java
+package com.horizonpack.horizonmilitary.data;
+
+import com.horizonpack.horizonmilitary.core.MilitaryRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CrimeType(ResourceLocation id, String nameKey, int severity, int sentenceDays, float fineMultiplier, boolean isViolent) {
+
+    public static void registerAll() {
+        register("theft", "crime.theft", 1, 5, 2.0f, false);
+        register("assault", "crime.assault", 3, 15, 5.0f, true);
+        register("murder", "crime.murder", 10, 3650, 0.0f, true);
+        register("arson", "crime.arson", 8, 365, 20.0f, true);
+        register("smuggling", "crime.smuggling", 4, 30, 10.0f, false);
+        register("espionage", "crime.espionage", 9, 1825, 0.0f, false);
+        register("tax_evasion", "crime.tax_evasion", 2, 10, 3.0f, false);
+        register("corruption", "crime.corruption", 5, 90, 15.0f, false);
+        register("organized_crime", "crime.organized_crime", 7, 730, 50.0f, true);
+        register("insurgency", "crime.insurgency", 10, 3650, 0.0f, true);
+    }
+
+    private static void register(String id, String key, int severity, int days, float fine, boolean violent) {
+        MilitaryRegistries.CRIME_TYPES.register(id, () -> new CrimeType(
+            ResourceLocation.fromNamespaceAndPath("horizonmilitary", id), key, severity, days, fine, violent));
+    }
+}
+Total Crime Types registered: 10
+File: systems/CrimeEngine.java
+code
+Java
+package com.horizonpack.horizonmilitary.systems;
+
+import com.horizonpack.horizonmilitary.data.CrimeType;
+import com.horizonpack.horizonsociety.state.SocietySavedData;
+import com.horizonpack.horizonsociety.state.Settlement;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.Random;
+
+public class CrimeEngine {
+
+    public static void init() {}
+
+    public static void tickCrime(ServerLevel level) {
+        SocietySavedData data = SocietySavedData.get(level);
+        Random rand = level.getRandom();
+        
+        // Scan settlements for poverty, unrest, and law enforcement levels
+        for (Settlement settlement : data.getAllSettlements()) {
+            float unrest = settlement.getUnrestLevel();
+            float poverty = settlement.getPovertyRate();
+            float enforcement = settlement.getLawEnforcementLevel();
+            
+            float crimeProbability = (unrest * 0.5f) + (poverty * 0.5f) - enforcement;
+            crimeProbability = Math.max(0.01f, Math.min(0.99f, crimeProbability));
+            
+            if (rand.nextFloat() < crimeProbability) {
+                commitRandomCrime(level, settlement, rand);
+            }
+        }
+    }
+    
+    private static void commitRandomCrime(ServerLevel level, Settlement settlement, Random rand) {
+        // Crime logic: generate random crime event, subtract resources, trigger police response
+        settlement.decreaseTreasury(100);
+        settlement.increaseUnrest(0.05f);
+    }
+
+    public static void playerCommitCrime(Player player, CrimeType crime) {
+        // Add to wanted level
+    }
+}
+10. Emergency & Disaster Response System
+File: systems/EmergencyEngine.java
+code
+Java
+package com.horizonpack.horizonmilitary.systems;
+
+import com.horizonpack.horizonmilitary.entities.emergency.FirefighterEntity;
+import com.horizonpack.horizonmilitary.entities.emergency.ParamedicEntity;
+import com.horizonpack.horizonworld.data.disaster.DisasterInstance;
+import com.horizonpack.horizonworld.data.planet.PlanetData;
+import com.horizonpack.horizonworld.events.custom.DisasterPhaseEvent;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobSpawnType;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.FireBlock;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import com.horizonpack.horizonmilitary.core.HorizonMilitary;
+
+@Mod.EventBusSubscriber(modid = HorizonMilitary.MODID)
+public class EmergencyEngine {
+
+    public static void init() {}
+
+    /**
+     * Called on server tick. Dispatches emergency services to active disasters.
+     */
+    public static void tickEmergencyResponse(ServerLevel level) {
+        PlanetData planet = PlanetData.get(level);
+        
+        for (DisasterInstance disaster : planet.activeDisasters()) {
+            if (disaster.phase() == com.horizonpack.horizonworld.data.disaster.DisasterPhase.ACTIVE || 
+                disaster.phase() == com.horizonpack.horizonworld.data.disaster.DisasterPhase.PEAK) {
+                
+                // Example: Dispatch firefighters to wildfires
+                if (disaster.type() == com.horizonpack.horizonworld.data.disaster.DisasterType.WILDFIRE) {
+                    dispatchFirefighters(level, disaster.epicenter());
+                }
+                
+                // Example: Dispatch paramedics to earthquakes
+                if (disaster.type() == com.horizonpack.horizonworld.data.disaster.DisasterType.EARTHQUAKE) {
+                    dispatchParamedics(level, disaster.epicenter());
+                }
+            }
+        }
+    }
+
+    private static void dispatchFirefighters(ServerLevel level, BlockPos epicenter) {
+        // Find nearest fire station (simplified logic)
+        // Spawn firefighter entities
+        // Assign them ExtinguishFireGoal
+        // For brevity, we just spawn one at the epicenter
+        if (level.getRandom().nextFloat() < 0.05f) { // 5% chance per tick during disaster
+            FirefighterEntity firefighter = new FirefighterEntity((EntityType<? extends FirefighterEntity>) BuiltInRegistries.ENTITY_TYPE.get(ResourceLocation.fromNamespaceAndPath(HorizonMilitary.MODID, "firefighter")), level);
+            firefighter.setPos(epicenter.getX(), epicenter.getY() + 1, epicenter.getZ());
+            level.addFreshEntity(firefighter);
+        }
+    }
+    
+    private static void dispatchParamedics(ServerLevel level, BlockPos epicenter) {
+         if (level.getRandom().nextFloat() < 0.02f) { // 2% chance per tick during disaster
+            ParamedicEntity paramedic = new ParamedicEntity((EntityType<? extends ParamedicEntity>) BuiltInRegistries.ENTITY_TYPE.get(ResourceLocation.fromNamespaceAndPath(HorizonMilitary.MODID, "paramedic")), level);
+            paramedic.setPos(epicenter.getX(), epicenter.getY() + 1, epicenter.getZ());
+            level.addFreshEntity(paramedic);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onDisasterPhaseChange(DisasterPhaseEvent event) {
+        if (event.level() instanceof ServerLevel level) {
+            // Trigger alarms, mobilize units
+        }
+    }
+}
+11. Combat & Formation Engine
+11.1 Formation Manager
+File: systems/FormationManager.java
+code
+Java
+package com.horizonpack.horizonmilitary.systems;
+
+import com.horizonpack.horizonmilitary.entities.units.MilitaryUnitEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.Vec3;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+public class FormationManager {
+
+    // Simplified list of active formations
+    private static final List<Formation> activeFormations = new ArrayList<>();
+
+    public static void init() {}
+
+    public static Formation createFormation(UUID commanderId, FormationType type) {
+        Formation f = new Formation(commanderId, type);
+        activeFormations.add(f);
+        return f;
+    }
+
+    public static void tickFormations(ServerLevel level) {
+        for (Formation f : activeFormations) {
+            f.tick(level);
+        }
+    }
+
+    public enum FormationType {
+        LINE, COLUMN, WEDGE, SQUARE, SKIRMISH
+    }
+
+    public static class Formation {
+        private final UUID commanderId;
+        private final FormationType type;
+        private final List<MilitaryUnitEntity> units = new ArrayList<>();
+        private BlockPos targetDestination;
+        private float facing;
+
+        public Formation(UUID commanderId, FormationType type) {
+            this.commanderId = commanderId;
+            this.type = type;
+        }
+
+        public void addUnit(MilitaryUnitEntity unit) {
+            units.add(unit);
+            unit.setFormation(this);
+        }
+
+        public void removeUnit(MilitaryUnitEntity unit) {
+            units.remove(unit);
+            unit.setFormation(null);
+        }
+
+        public void orderMove(BlockPos destination, float facing) {
+            this.targetDestination = destination;
+            this.facing = facing;
+            assignPositions();
+        }
+
+        private void assignPositions() {
+            if (targetDestination == null || units.isEmpty()) return;
+
+            int count = units.size();
+            int spacing = 2; // blocks between units
+
+            switch (type) {
+                case LINE -> {
+                    // Assign positions in a line perpendicular to facing
+                    int width = count;
+                    int startX = -(width * spacing) / 2;
+                    for (int i = 0; i < count; i++) {
+                        Vec3 offset = new Vec3(startX + (i * spacing), 0, 0).yRot((float) Math.toRadians(-facing));
+                        BlockPos unitTarget = targetDestination.offset((int) offset.x, 0, (int) offset.z);
+                        units.get(i).setFormationTarget(unitTarget);
+                    }
+                }
+                case COLUMN -> {
+                    // Assign positions in a column parallel to facing
+                     for (int i = 0; i < count; i++) {
+                        Vec3 offset = new Vec3(0, 0, -(i * spacing)).yRot((float) Math.toRadians(-facing));
+                        BlockPos unitTarget = targetDestination.offset((int) offset.x, 0, (int) offset.z);
+                        units.get(i).setFormationTarget(unitTarget);
+                    }
+                }
+                // Implement WEDGE, SQUARE, SKIRMISH similarly
+                default -> {
+                    for (MilitaryUnitEntity unit : units) {
+                        unit.setFormationTarget(targetDestination); // Fallback
+                    }
+                }
+            }
+        }
+
+        public void tick(ServerLevel level) {
+            // Verify cohesion, adjust speed for slowest unit, handle engaged combat
+            if (!units.isEmpty() && targetDestination != null) {
+                boolean allInPosition = true;
+                for (MilitaryUnitEntity unit : units) {
+                    if (unit.blockPosition().distSqr(unit.getFormationTarget()) > 4) {
+                        allInPosition = false;
+                        break;
+                    }
+                }
+                // If all in position, formation holds. If engaged, execute formation attacks (e.g., volley fire)
+            }
+        }
+    }
+}
+11.2 Formation Move Goal
+File: ai/FormationMoveGoal.java
+code
+Java
+package com.horizonpack.horizonmilitary.ai;
+
+import com.horizonpack.horizonmilitary.entities.units.MilitaryUnitEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
+
+import java.util.EnumSet;
+
+public class FormationMoveGoal extends Goal {
+
+    private final MilitaryUnitEntity unit;
+    private final PathNavigation navigation;
+    private BlockPos currentTarget;
+
+    public FormationMoveGoal(MilitaryUnitEntity unit) {
+        this.unit = unit;
+        this.navigation = unit.getNavigation();
+        this.setFlags(EnumSet.of(Goal.Flag.MOVE));
+    }
+
+    @Override
+    public boolean canUse() {
+        return unit.getFormation() != null && unit.getFormationTarget() != null && 
+               unit.blockPosition().distSqr(unit.getFormationTarget()) > 4;
+    }
+
+    @Override
+    public void start() {
+        this.currentTarget = unit.getFormationTarget();
+        this.navigation.moveTo(currentTarget.getX(), currentTarget.getY(), currentTarget.getZ(), 1.0D);
+    }
+
+    @Override
+    public void tick() {
+        // Adjust path if target changes
+        if (unit.getFormationTarget() != null && !unit.getFormationTarget().equals(currentTarget)) {
+            this.currentTarget = unit.getFormationTarget();
+            this.navigation.moveTo(currentTarget.getX(), currentTarget.getY(), currentTarget.getZ(), 1.0D);
+        }
+        
+        // Match speed with formation
+        // (Simplified logic; real implementation queries FormationManager for slowest unit speed)
+    }
+
+    @Override
+    public boolean canContinueToUse() {
+        return canUse() && !this.navigation.isDone();
+    }
+}
+12. Logistics & Supply Engine
+File: systems/LogisticsEngine.java
+code
+Java
+package com.horizonpack.horizonmilitary.systems;
+
+import com.horizonpack.horizonmilitary.entities.units.MilitaryUnitEntity;
+import com.horizonpack.horizonsociety.state.Civilization;
+import com.horizonpack.horizonsociety.state.SocietySavedData;
+import net.minecraft.server.level.ServerLevel;
+
+public class LogisticsEngine {
+
+    public static void init() {}
+
+    /**
+     * Ticks supply consumption for all military units.
+     * Called every in-game hour (1000 ticks).
+     */
+    public static void tickLogistics(ServerLevel level) {
+        SocietySavedData data = SocietySavedData.get(level);
+        
+        // Iterate all military units in the level (simplified)
+        for (net.minecraft.world.entity.Entity entity : level.getAllEntities()) {
+            if (entity instanceof MilitaryUnitEntity unit) {
+                consumeSupplies(unit, data);
+            }
+        }
+    }
+
+    private static void consumeSupplies(MilitaryUnitEntity unit, SocietySavedData data) {
+        // 1. Check food
+        if (unit.getSupplyFood() > 0) {
+            unit.setSupplyFood(unit.getSupplyFood() - 1);
+        } else {
+            // Starvation attrition
+            unit.hurt(unit.damageSources().starve(), 1.0f);
+            unit.reduceMorale(5.0f);
+        }
+
+        // 2. Check ammo (if applicable)
+        // Ammo is consumed during combat via weapon logic, but checked here for morale
+        if (unit.requiresAmmo() && unit.getSupplyAmmo() == 0) {
+            unit.reduceMorale(2.0f);
+        }
+
+        // 3. Request resupply
+        if (unit.getSupplyFood() < 10 || (unit.requiresAmmo() && unit.getSupplyAmmo() < 20)) {
+            requestResupply(unit, data);
+        }
+    }
+
+    private static void requestResupply(MilitaryUnitEntity unit, SocietySavedData data) {
+        Civilization civ = data.getCivilization(unit.getCivilizationId());
+        if (civ != null) {
+            // Check connected supply lines (HorizonTransport roads/rails)
+            // Deduct resources from nearest settlement treasury/inventory
+            // Dispatch a supply caravan (MerchantCaravanEntity from HorizonEconomy) to unit's location
+        }
+    }
+}
+13. Block Entities
+13.1 Barracks Block Entity
+File: blockentities/BarracksBlockEntity.java
+Trains and houses military units. Requires weapons and food in its inventory to spawn units.
+code
+Java
+package com.horizonpack.horizonmilitary.blockentities;
+
+import com.horizonpack.horizonmilitary.core.MilitaryRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.items.ItemStackHandler;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.UUID;
+
+public class BarracksBlockEntity extends BlockEntity implements MenuProvider {
+
+    // 0-8: Weapons/Armor input, 9-17: Food input
+    public final ItemStackHandler inventory = new ItemStackHandler(18) {
+        @Override
+        protected void onContentsChanged(int slot) {
+            setChanged();
+        }
+    };
+
+    private UUID civilizationId;
+    private String trainingUnitType = "";
+    private int trainingProgress = 0;
+    private static final int MAX_TRAINING_TIME = 1200; // 1 minute
+
+    public BarracksBlockEntity(BlockPos pos, BlockState state) {
+        super(MilitaryRegistries.BLOCK_ENTITIES.getEntries().stream()
+                .filter(r -> r.getId().getPath().equals("barracks")).findFirst().get().get(), pos, state);
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, BarracksBlockEntity be) {
+        if (!be.trainingUnitType.isEmpty() && be.hasRequiredResources()) {
+            be.trainingProgress++;
+            if (be.trainingProgress >= MAX_TRAINING_TIME) {
+                be.consumeResources();
+                be.spawnUnit(level, pos);
+                be.trainingProgress = 0;
+                be.trainingUnitType = ""; // Reset after training
+                be.setChanged();
+            }
+        } else if (be.trainingProgress > 0) {
+            be.trainingProgress--;
+        }
+    }
+
+    private boolean hasRequiredResources() {
+        // Logic to check inventory slots 0-17 for required weapons, armor, and food
+        // specific to the trainingUnitType.
+        return true; // Simplified for example
+    }
+
+    private void consumeResources() {
+        // Logic to shrink ItemStacks in inventory based on unit cost.
+    }
+
+    private void spawnUnit(Level level, BlockPos pos) {
+        // Instantiate and spawn the MilitaryUnitEntity
+        // entity.setCivilizationId(civilizationId);
+    }
+    
+    public void setTrainingUnit(String type) {
+        this.trainingUnitType = type;
+        this.setChanged();
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.put("Inventory", inventory.serializeNBT(registries));
+        if (civilizationId != null) tag.putUUID("CivId", civilizationId);
+        tag.putString("TrainingType", trainingUnitType);
+        tag.putInt("Progress", trainingProgress);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("Inventory")) inventory.deserializeNBT(registries, tag.getCompound("Inventory"));
+        if (tag.contains("CivId")) civilizationId = tag.getUUID("CivId");
+        trainingUnitType = tag.getString("TrainingType");
+        trainingProgress = tag.getInt("Progress");
+    }
+
+    @Override
+    public Component getDisplayName() {
+        return Component.translatable("block.horizonmilitary.barracks");
+    }
+
+    @Nullable
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory inventory, Player player) {
+        return null; // Return BarracksMenu in full UI implementation
+    }
+}
+14. Event Hooks
+File: events/MilitaryEventHandlers.java
+code
+Java
+package com.horizonpack.horizonmilitary.events;
+
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizonmilitary.core.HorizonMilitary;
+import com.horizonpack.horizonmilitary.systems.CrimeEngine;
+import com.horizonpack.horizonmilitary.systems.EmergencyEngine;
+import com.horizonpack.horizonmilitary.systems.FormationManager;
+import com.horizonpack.horizonmilitary.systems.LogisticsEngine;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonMilitary.MODID)
+public class MilitaryEventHandlers {
+
+    private static int tickCounter = 0;
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        
+        // Formations must be updated every tick
+        FormationManager.tickFormations(level);
+        
+        // Emergency response checks every tick
+        EmergencyEngine.tickEmergencyResponse(level);
+
+        tickCounter++;
+        
+        // Crime checks every in-game hour (1000 ticks)
+        if (tickCounter % 1000 == 0) {
+            CrimeEngine.tickCrime(level);
+            LogisticsEngine.tickLogistics(level);
+        }
+        
+        if (tickCounter >= 24000) tickCounter = 0;
+    }
+}
+15. Network Packets
+15.1 FormationCommandPacket
+Sent from the client (Commander selecting units and clicking a destination) to the server.
+File: network/packets/FormationCommandPacket.java
+code
+Java
+package com.horizonpack.horizonmilitary.network.packets;
+
+import com.horizonpack.horizonmilitary.core.HorizonMilitary;
+import com.horizonpack.horizonmilitary.systems.FormationManager;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.UUID;
+
+public record FormationCommandPacket(UUID formationId, BlockPos destination, float facing) implements CustomPacketPayload {
+
+    public static final Type<FormationCommandPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonMilitary.MODID, "formation_command"));
+
+    public static final StreamCodec<ByteBuf, FormationCommandPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.UUID, FormationCommandPacket::formationId,
+        BlockPos.STREAM_CODEC, FormationCommandPacket::destination,
+        ByteBufCodecs.FLOAT, FormationCommandPacket::facing,
+        FormationCommandPacket::new
+    );
+
+    @Override
+    public Type<FormationCommandPacket> type() { return TYPE; }
+
+    public static void handleServer(FormationCommandPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            // Find the formation and issue the order
+            // Security check: Verify context.player() is the commander of the formation
+            // (Omitted for brevity)
+        });
+    }
+}
+15.2 MilitaryPacketHandler
+File: network/MilitaryPacketHandler.java
+code
+Java
+package com.horizonpack.horizonmilitary.network;
+
+import com.horizonpack.horizonmilitary.core.HorizonMilitary;
+import com.horizonpack.horizonmilitary.network.packets.FormationCommandPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class MilitaryPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonMilitary.MODID).versioned("1.0.0");
+        registrar.playToServer(FormationCommandPacket.TYPE, FormationCommandPacket.STREAM_CODEC, FormationCommandPacket::handleServer);
+    }
+}
+16. Configuration
+File: core/MilitaryConfig.java
+code
+Java
+package com.horizonpack.horizonmilitary.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class MilitaryConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.BooleanValue enableSupplyLines;
+        public final ModConfigSpec.DoubleValue baseCrimeRate;
+        public final ModConfigSpec.IntValue maxArmySize;
+        public final ModConfigSpec.BooleanValue destructibleFortifications;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("warfare");
+            enableSupplyLines = builder.comment("Armies take starvation attrition if supply lines are cut.").define("enableSupplyLines", true);
+            maxArmySize = builder.comment("Maximum number of units in a single formation.").defineInRange("maxArmySize", 100, 10, 500);
+            destructibleFortifications = builder.comment("Allows siege engines to destroy walls using structural integrity.").define("destructibleFortifications", true);
+            builder.pop();
+
+            builder.push("society");
+            baseCrimeRate = builder.comment("Base multiplier for crime events in settlements.").defineInRange("baseCrimeRate", 1.0, 0.0, 5.0);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showFormationOverlay;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showFormationOverlay = builder.comment("Show geometric overlays for selected formations.").define("showFormationOverlay", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+17. Data Pack Integration
+All Crime Types are serialized and synchronized via custom DeferredRegisters (see Section 4). This allows data pack developers to inject custom crimes, adjust severity, sentence lengths, and fine multipliers.
+Weapons and siege equipment use standard item tags for damage calculation adjustments against specific armor or fortification tiers.
+18. Blockstate & Model JSONs
+18.1 Barracks Blockstate
+assets/horizonmilitary/blockstates/barracks.json
+code
+JSON
+{
+  "variants": {
+    "facing=north": { "model": "horizonmilitary:block/barracks" },
+    "facing=south": { "model": "horizonmilitary:block/barracks", "y": 180 },
+    "facing=east":  { "model": "horizonmilitary:block/barracks", "y": 90 },
+    "facing=west":  { "model": "horizonmilitary:block/barracks", "y": 270 }
+  }
+}
+18.2 Barracks Model
+assets/horizonmilitary/models/block/barracks.json
+code
+JSON
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "top": "horizonmilitary:block/barracks_top",
+    "front": "horizonmilitary:block/barracks_front",
+    "side": "minecraft:block/stone_bricks"
+  }
+}
+18.3 Iron Sword Model
+assets/horizonmilitary/models/item/iron_sword.json
+code
+JSON
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "horizonmilitary:item/iron_sword"
+  }
+}
+19. Recipe JSONs
+19.1 Crafting: Barracks
+data/horizonmilitary/recipes/barracks.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "copper_age" }
+  ],
+  "pattern": [
+    "WWW",
+    "SWS",
+    "BBB"
+  ],
+  "key": {
+    "W": { "tag": "minecraft:logs" },
+    "S": { "item": "minecraft:stone_sword" },
+    "B": { "item": "minecraft:stone_bricks" }
+  },
+  "result": {
+    "id": "horizonmilitary:barracks",
+    "count": 1
+  }
+}
+19.2 Crafting: Musket
+data/horizonmilitary/recipes/musket.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "industrial" }
+  ],
+  "pattern": [
+    "  I",
+    " I ",
+    "W  "
+  ],
+  "key": {
+    "I": { "item": "horizondata:iron_ingot" },
+    "W": { "item": "minecraft:oak_planks" }
+  },
+  "result": {
+    "id": "horizonmilitary:musket",
+    "count": 1
+  }
+}
+20. Loot Table JSONs
+20.1 Barracks Block Drop
+data/horizonmilitary/loot_tables/blocks/barracks.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonmilitary:barracks",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "source": "block_entity",
+              "include": ["horizonmilitary:inventory"]
+            }
+          ]
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+21. Tag JSONs
+21.1 Firearms Tag
+data/horizonmilitary/tags/items/firearms.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonmilitary:musket",
+    "horizonmilitary:rifle",
+    "horizonmilitary:sniper_rifle",
+    "horizonmilitary:machine_gun"
+  ]
+}
+21.2 Heavy Weapons Tag
+data/horizonmilitary/tags/items/heavy_weapons.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonmilitary:rocket_launcher",
+    "horizonmilitary:cannon",
+    "horizonmilitary:field_artillery",
+    "horizonmilitary:naval_cannon",
+    "horizonmilitary:torpedo",
+    "horizonmilitary:bomb"
+  ]
+}
+22. Lang / Localization
+assets/horizonmilitary/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonmilitary.weapons": "HorizonMilitary - Weapons",
+  "itemGroup.horizonmilitary.defense": "HorizonMilitary - Defenses & Facilities",
+
+  "block.horizonmilitary.wooden_palisade": "Wooden Palisade",
+  "block.horizonmilitary.stone_wall": "Stone Wall",
+  "block.horizonmilitary.castle_wall": "Castle Wall",
+  "block.horizonmilitary.reinforced_wall": "Reinforced Wall",
+  "block.horizonmilitary.concrete_bunker": "Concrete Bunker",
+  "block.horizonmilitary.guard_tower": "Guard Tower",
+  "block.horizonmilitary.archer_tower": "Archer Tower",
+  "block.horizonmilitary.cannon_tower": "Cannon Tower",
+  "block.horizonmilitary.anti_air_gun": "Anti-Air Emplacement",
+  "block.horizonmilitary.radar_station": "Radar Station",
+  "block.horizonmilitary.barracks": "Barracks",
+  "block.horizonmilitary.police_station": "Police Station",
+  "block.horizonmilitary.fire_station": "Fire Station",
+
+  "item.horizonmilitary.club": "Wooden Club",
+  "item.horizonmilitary.spear": "Spear",
+  "item.horizonmilitary.flint_knife": "Flint Knife",
+  "item.horizonmilitary.copper_sword": "Copper Sword",
+  "item.horizonmilitary.bronze_sword": "Bronze Sword",
+  "item.horizonmilitary.iron_sword": "Iron Sword",
+  "item.horizonmilitary.steel_sword": "Steel Sword",
+  "item.horizonmilitary.crossbow": "Heavy Crossbow",
+  "item.horizonmilitary.longbow": "Longbow",
+  "item.horizonmilitary.musket": "Musket",
+  "item.horizonmilitary.rifle": "Bolt-Action Rifle",
+  "item.horizonmilitary.sniper_rifle": "Sniper Rifle",
+  "item.horizonmilitary.machine_gun": "Machine Gun",
+  "item.horizonmilitary.rocket_launcher": "Rocket Launcher",
+  "item.horizonmilitary.cannon": "Cannon",
+  "item.horizonmilitary.field_artillery": "Field Artillery",
+  "item.horizonmilitary.naval_cannon": "Naval Cannon",
+  "item.horizonmilitary.torpedo": "Torpedo",
+  "item.horizonmilitary.bomb": "Explosive Bomb",
+
+  "entity.horizonmilitary.militia": "Militia",
+  "entity.horizonmilitary.spearman": "Spearman",
+  "entity.horizonmilitary.swordsman": "Swordsman",
+  "entity.horizonmilitary.pikeman": "Pikeman",
+  "entity.horizonmilitary.archer": "Archer",
+  "entity.horizonmilitary.crossbowman": "Crossbowman",
+  "entity.horizonmilitary.cavalry_light": "Light Cavalry",
+  "entity.horizonmilitary.cavalry_heavy": "Heavy Cavalry",
+  "entity.horizonmilitary.knight": "Knight",
+  "entity.horizonmilitary.siege_engineer": "Siege Engineer",
+  "entity.horizonmilitary.rifleman": "Rifleman",
+  "entity.horizonmilitary.artillery_crew": "Artillery Crew",
+  "entity.horizonmilitary.tank_crew": "Tank Crew",
+  "entity.horizonmilitary.pilot": "Pilot",
+  "entity.horizonmilitary.naval_officer": "Naval Officer",
+  "entity.horizonmilitary.special_forces": "Special Forces",
+  "entity.horizonmilitary.spy_unit": "Spy",
+  "entity.horizonmilitary.medic": "Combat Medic",
+
+  "entity.horizonmilitary.battering_ram": "Battering Ram",
+  "entity.horizonmilitary.siege_tower": "Siege Tower",
+  "entity.horizonmilitary.catapult": "Catapult",
+  "entity.horizonmilitary.trebuchet": "Trebuchet",
+  "entity.horizonmilitary.ballista": "Ballista",
+  "entity.horizonmilitary.cannon_siege": "Siege Cannon",
+  "entity.horizonmilitary.mortar_siege": "Siege Mortar",
+  "entity.horizonmilitary.tunnel_bore": "Tunnel Bore",
+
+  "entity.horizonmilitary.firefighter": "Firefighter",
+  "entity.horizonmilitary.paramedic": "Paramedic",
+
+  "crime.theft": "Theft",
+  "crime.assault": "Assault",
+  "crime.murder": "Murder",
+  "crime.arson": "Arson",
+  "crime.smuggling": "Smuggling",
+  "crime.espionage": "Espionage",
+  "crime.tax_evasion": "Tax Evasion",
+  "crime.corruption": "Corruption",
+  "crime.organized_crime": "Organized Crime",
+  "crime.insurgency": "Insurgency",
+
+  "advancements.horizonmilitary.root.title": "Art of War",
+  "advancements.horizonmilitary.root.desc": "Train your first military unit.",
+  "advancements.horizonmilitary.siege.title": "Breach the Walls",
+  "advancements.horizonmilitary.siege.desc": "Destroy an enemy fortification."
+}
+23. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonmilitary'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonmilitary', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+    implementation "com.horizonpack:horizonpower:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+24. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonmilitary"
+    version = "1.0.0"
+    displayName = "Horizon Military & Justice"
+    description = """
+Implements disciplined armies, strategic sieges, supply lines, crime networks, and emergency response for the Horizon Corebreach modpack. 
+Includes 18 military units, 19 weapons, 8 siege engines, and dynamic crime simulation.
+"""
+    logoFile = "horizonmilitary.png"
+
+[[dependencies.horizonmilitary]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonmilitary]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonmilitary]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonmilitary]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonmilitary]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonmilitary]]
+    modId = "horizonpower"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+25. Critical Implementation Notes
+Formation Tick Optimization: FormationManager.tickFormations() iterates over all active formations every tick. To prevent server lag, position assignment (assignPositions()) must only be called when the formation's target destination or facing changes, not every tick. The per-unit tick should only check cohesion distance.
+Siege Engine Destruction: FortificationBlock integrates directly with HorizonData's StructuralIntegrity system. When a Trebuchet or Cannon projectile hits a wall, it does not use Level#destroyBlock. It applies a massive load spike to the targeted block, forcing the structural integrity engine to calculate an authentic collapse pattern for the surrounding wall section.
+Logistics Attrition Radius: LogisticsEngine checks if units are within supply range. Scanning the level for roads/rails (HorizonPower infrastructure) every hour for every unit is too expensive. Instead, settlements project a "supply aura" radius stored in a spatial hash map. Units check their intersection with this aura.
+Firearm Reload Mechanics: FirearmItem uses NeoForge data components to track loaded ammunition and reload progress. The reload action is a channeled use action (like drawing a bow). If interrupted, the progress is lost. This enforces realistic musket/rifle firing lines.
+Crime Pathfinding Constraints: When CrimeEngine spawns a thief or assassin, they must use a customized navigation goal that actively avoids the line of sight of PoliceStationBlockEntity guards and DefensiveTowerBlock watchmen.
+Firefighter Water Supply: FirefighterEntity using ExtinguishFireGoal requires nearby water sources (or a fire hydrant/pump from HorizonUrbanization if implemented). If no water is within 32 blocks, they will fail to extinguish the fire and run back to the station.
+Cross-Mod Tiers: WeaponRegistry melee weapons utilize vanilla Tiers for base damage calculations, but their actual damage output is heavily modified by HorizonData material properties (e.g., a Copper Sword breaks faster and does less damage than a Bronze Sword, even if both map to Tiers.STONE).
+Entity Alignment/Loyalty: MilitaryUnitEntity contains a civilizationId UUID in its NBT. Units will actively attack units with a different civilizationId if their respective Civilizations (from HorizonSociety) are currently at war. This lookup caches the war status to avoid constantly querying SocietySavedData.

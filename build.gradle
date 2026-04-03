@@ -1,0 +1,26 @@
+plugins {
+    // Define the plugin versions here once.
+    // 'apply false' means we don't use it in the root, just define the version for sub-projects.
+    id 'net.neoforged.moddev' version '2.0.123' apply false
+}
+
+// Optional: Shared settings for all 18 mods
+subprojects {
+    apply plugin: 'java-library'
+
+    java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+
+    repositories {
+        maven { url = "https://maven.neoforged.net/releases" }
+        maven { url = "https://modmaven.dev" }           // JEI
+        maven { url = "https://maven.blamejared.com" }   // Jade
+        maven {
+            url = "https://api.modrinth.com/maven"
+            content { includeGroup "maven.modrinth" }
+        }
+    }
+}

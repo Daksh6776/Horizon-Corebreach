@@ -1,0 +1,31 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = 'https://maven.neoforged.net/releases' }
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'Horizon-Corebreach'
+
+include 'horizon_core'
+include 'horizon_data'
+include 'horizon_world'
+include 'horizon_biome'
+include 'horizon_power'
+include 'horizon_society'
+include 'horizon_economy'
+include 'horizon_culture'
+include 'horizon_military'
+include 'horizon_knowledge'
+include 'horizon_settlement'
+include 'horizon_survival'
+include 'horizon_skills'
+include 'horizon_family'
+include 'horizon_explore'
+include 'horizon_dimensions'
+include 'horizon_corebreach'
+include 'horizon_compat'

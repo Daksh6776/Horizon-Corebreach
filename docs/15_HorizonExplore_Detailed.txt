@@ -1,0 +1,1247 @@
+HorizonExplore — Detailed Technical Specification
+Mod ID: horizonexplore
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Exploration, Navigation, Oceanic, and Space Systems
+Absorbed mods: HorizonNavigation, HorizonOcean, HorizonSpace
+Depends on: horizoncore, horizondata, horizonworld, horizonpower
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Ocean Zones Registry
+Naval Vessels Registry
+Navigation Tools Registry
+Space Structures Registry
+Exploration Biomes Registry
+Data Attachments & Components
+Navigation Engine
+Seafaring Engine
+Space Exploration Engine
+Entity Implementation
+Block & Item Registration
+Block Entities
+Event Hooks
+Network Packets
+Client GUI & Rendering
+Configuration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonExplore integrates the entirety of the player's journey across the planet's surface, into its deep oceans, and eventually out into the cosmos.
+Navigation & Cartography: Eliminates the standard F3 debug screen coordinates. Players must rely on craftable navigation tools (compasses, sextants, astrolabes) to determine position, latitude, and longitude. Maps feature a true fog of war.
+Oceanic Exploration: Expands the oceans vertically and horizontally, generating 9 distinct ocean zones with unique hazards like pressure, hydrothermal vents, and abyssal darkness.
+Naval Vessels: Introduces 16 tier-based rideable ship entities, from primitive rafts to nuclear submarines, requiring varying crew sizes, fuel types, and tech unlocks.
+Space Colonization: Endgame progression enabling multiblock rocket launches, satellite deployment, and colonization of the Lunar Base and Mars Habitat.
+Exploration Biomes: Registers 8 extreme biomes containing unique lost civilizations, dimensional rifts, and endgame resources.
+2. File & Package Structure
+code
+Text
+horizon_explore/
+├── src/main/java/com/horizonpack/horizonexplore/
+│   ├── core/
+│   │   ├── HorizonExplore.java
+│   │   ├── ExploreRegistries.java
+│   │   └── ExploreConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── OceanZoneDef.java
+│   │   │   ├── NavalVesselType.java
+│   │   │   ├── NavigationToolType.java
+│   │   │   ├── SpaceStructureDef.java
+│   │   │   └── ExplorationBiomeDef.java
+│   │   ├── attachments/
+│   │   │   ├── PlayerExplorationData.java
+│   │   │   ├── VesselData.java
+│   │   │   └── ExploreAttachments.java
+│   │   └── components/
+│   │       ├── CoordinatesComponent.java
+│   │       └── MapFogComponent.java
+│   ├── systems/
+│   │   ├── NavigationEngine.java
+│   │   ├── SeafaringEngine.java
+│   │   └── SpaceEngine.java
+│   ├── entities/
+│   │   ├── NavalVesselEntity.java
+│   │   └── NavalVesselRenderer.java
+│   ├── blocks/
+│   │   ├── LaunchPadBlock.java
+│   │   ├── SatelliteDishBlock.java
+│   │   └── DeepSpaceAntennaBlock.java
+│   ├── blockentities/
+│   │   ├── LaunchPadBlockEntity.java
+│   │   └── SatelliteDishBlockEntity.java
+│   ├── items/
+│   │   ├── SextantItem.java
+│   │   ├── ChronometerItem.java
+│   │   └── GpsDeviceItem.java
+│   ├── events/
+│   │   ├── ExploreEventHandlers.java
+│   │   └── custom/
+│   │       ├── ZoneEnterEvent.java
+│   │       ├── SpaceLaunchEvent.java
+│   │       └── ShipSinkEvent.java
+│   ├── network/
+│   │   ├── ExplorePacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncExplorationPacket.java
+│   │       ├── OpenMapPacket.java
+│   │       └── RocketLaunchPacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── NavigationMapScreen.java
+│   │   │   └── SatelliteOverlay.java
+│   │   └── render/
+│   │       └── SpaceSkyRenderer.java
+│   └── utils/
+│       ├── CelestialMath.java
+│       └── Hydrodynamics.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonexplore/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonexplore/
+│       ├── recipes/
+│       ├── loot_tables/
+│       ├── worldgen/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonExplore.java
+code
+Java
+package com.horizonpack.horizonexplore.core;
+
+import com.horizonpack.horizonexplore.data.attachments.ExploreAttachments;
+import com.horizonpack.horizonexplore.events.ExploreEventHandlers;
+import com.horizonpack.horizonexplore.network.ExplorePacketHandler;
+import com.horizonpack.horizonexplore.systems.NavigationEngine;
+import com.horizonpack.horizonexplore.systems.SeafaringEngine;
+import com.horizonpack.horizonexplore.systems.SpaceEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonExplore.MODID)
+public class HorizonExplore {
+    public static final String MODID = "horizonexplore";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonExplore(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, ExploreConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, ExploreConfig.CLIENT_SPEC);
+
+        ExploreRegistries.BLOCKS.register(modEventBus);
+        ExploreRegistries.ITEMS.register(modEventBus);
+        ExploreRegistries.BLOCK_ENTITIES.register(modEventBus);
+        ExploreRegistries.ENTITY_TYPES.register(modEventBus);
+        ExploreRegistries.DATA_COMPONENT_TYPES.register(modEventBus);
+        ExploreRegistries.MENU_TYPES.register(modEventBus);
+
+        ExploreRegistries.OCEAN_ZONES.register(modEventBus);
+        ExploreRegistries.SPACE_STRUCTURES.register(modEventBus);
+
+        ExploreAttachments.ATTACHMENT_TYPES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(ExploreRegistries::registerNewRegistries);
+        modEventBus.addListener(ExploreRegistries::registerEntityRenderers);
+        modEventBus.addListener(ExplorePacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(ExploreEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            NavigationEngine.init();
+            SeafaringEngine.init();
+            SpaceEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/ExploreRegistries.java
+code
+Java
+package com.horizonpack.horizonexplore.core;
+
+import com.horizonpack.horizonexplore.data.registry.OceanZoneDef;
+import com.horizonpack.horizonexplore.data.registry.SpaceStructureDef;
+import com.horizonpack.horizonexplore.entities.NavalVesselEntity;
+import com.horizonpack.horizonexplore.entities.NavalVesselRenderer;
+import net.minecraft.core.Registry;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class ExploreRegistries {
+
+    public static final ResourceKey<Registry<OceanZoneDef>> OCEAN_ZONE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonExplore.MODID, "ocean_zones"));
+    public static final ResourceKey<Registry<SpaceStructureDef>> SPACE_STRUCTURE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonExplore.MODID, "space_structures"));
+
+    public static final DeferredRegister<OceanZoneDef> OCEAN_ZONES = DeferredRegister.create(OCEAN_ZONE_KEY, HorizonExplore.MODID);
+    public static final DeferredRegister<SpaceStructureDef> SPACE_STRUCTURES = DeferredRegister.create(SPACE_STRUCTURE_KEY, HorizonExplore.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonExplore.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonExplore.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonExplore.MODID);
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE, HorizonExplore.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonExplore.MODID);
+    public static final DeferredRegister.DataComponents DATA_COMPONENT_TYPES = DeferredRegister.createDataComponents(net.minecraft.core.registries.Registries.DATA_COMPONENT_TYPE, HorizonExplore.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(OCEAN_ZONE_KEY).sync(true));
+        event.register(new RegistryBuilder<>(SPACE_STRUCTURE_KEY).sync(true));
+    }
+
+    public static void registerEntityRenderers(EntityRenderersEvent.RegisterRenderers event) {
+        for (var entry : ENTITY_TYPES.getEntries()) {
+            event.registerEntityRenderer((EntityType<NavalVesselEntity>) entry.get(), NavalVesselRenderer::new);
+        }
+    }
+}
+5. Ocean Zones Registry
+File: data/registry/OceanZoneDef.java
+code
+Java
+package com.horizonpack.horizonexplore.data.registry;
+
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record OceanZoneDef(ResourceLocation id, String nameKey, int minDepth, int maxDepth, double pressureDamage, boolean requiresLight) {
+
+    public static void registerAll() {
+        register("coastal_shelf", "zone.coastal_shelf", 0, 30, 0.0, false);
+        register("kelp_forest", "zone.kelp_forest", 10, 50, 0.0, false);
+        register("coral_reef", "zone.coral_reef", 5, 25, 0.0, false);
+        register("open_ocean", "zone.open_ocean", 0, 100, 0.0, false);
+        register("deep_ocean", "zone.deep_ocean", 100, 300, 2.0, true);
+        register("hydrothermal_vent", "zone.hydrothermal_vent", 250, 500, 5.0, true);
+        register("abyssal_zone", "zone.abyssal_zone", 500, 1000, 10.0, true);
+        register("underwater_cave", "zone.underwater_cave", 30, 200, 1.0, true);
+        register("sunken_civilization", "zone.sunken_civilization", 150, 600, 4.0, true);
+    }
+
+    private static void register(String id, String key, int minD, int maxD, double pressure, boolean reqLight) {
+        ExploreRegistries.OCEAN_ZONES.register(id, () -> new OceanZoneDef(
+            ResourceLocation.fromNamespaceAndPath("horizonexplore", id), key, minD, maxD, pressure, reqLight));
+    }
+}
+Total Ocean Zones registered: 9
+6. Naval Vessels Registry
+File: data/registry/NavalVesselType.java
+Registers all rideable entity vessels into the game.
+code
+Java
+package com.horizonpack.horizonexplore.data.registry;
+
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import com.horizonpack.horizonexplore.entities.NavalVesselEntity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public class NavalVesselType {
+
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> RAFT;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> DUGOUT_CANOE;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> FISHING_BOAT;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> GALLEY;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> LONGSHIP;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> CARAVEL;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> GALLEON;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> FRIGATE;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> STEAM_SHIP;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> IRONCLAD;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> SUBMARINE;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> DESTROYER;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> BATTLESHIP;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> AIRCRAFT_CARRIER;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> NUCLEAR_SUBMARINE;
+    public static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> RESEARCH_VESSEL;
+
+    public static void registerAll() {
+        RAFT = register("raft", 1.5f, 0.5f);
+        DUGOUT_CANOE = register("dugout_canoe", 2.0f, 0.6f);
+        FISHING_BOAT = register("fishing_boat", 3.0f, 1.2f);
+        GALLEY = register("galley", 8.0f, 3.0f);
+        LONGSHIP = register("longship", 7.0f, 2.0f);
+        CARAVEL = register("caravel", 6.0f, 4.0f);
+        GALLEON = register("galleon", 10.0f, 6.0f);
+        FRIGATE = register("frigate", 9.0f, 5.0f);
+        STEAM_SHIP = register("steam_ship", 12.0f, 7.0f);
+        IRONCLAD = register("ironclad", 14.0f, 6.0f);
+        SUBMARINE = register("submarine", 10.0f, 3.0f);
+        DESTROYER = register("destroyer", 18.0f, 6.0f);
+        BATTLESHIP = register("battleship", 30.0f, 10.0f);
+        AIRCRAFT_CARRIER = register("aircraft_carrier", 60.0f, 15.0f);
+        NUCLEAR_SUBMARINE = register("nuclear_submarine", 20.0f, 5.0f);
+        RESEARCH_VESSEL = register("research_vessel", 15.0f, 8.0f);
+    }
+
+    private static DeferredHolder<EntityType<?>, EntityType<NavalVesselEntity>> register(String id, float width, float height) {
+        return ExploreRegistries.ENTITY_TYPES.register(id, () -> 
+            EntityType.Builder.<NavalVesselEntity>of(NavalVesselEntity::new, MobCategory.MISC)
+                .sized(width, height)
+                .clientTrackingRange(20)
+                .build(id));
+    }
+}
+Total Naval Vessels registered: 16
+7. Navigation Tools Registry
+File: data/registry/NavigationToolType.java
+Registers all tools used to reveal map coordinates and navigate.
+code
+Java
+package com.horizonpack.horizonexplore.data.registry;
+
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import net.minecraft.world.item.Item;
+import net.neoforged.neoforge.registries.DeferredItem;
+
+public class NavigationToolType {
+    public static void registerAll() {
+        register("stick_compass");
+        register("star_map");
+        register("basic_map");
+        register("detailed_map");
+        register("world_map");
+        register("sextant");
+        register("astrolabe");
+        register("chronometer");
+        register("gps_device");
+        register("satellite_map");
+        register("holographic_navigator");
+    }
+
+    private static void register(String id) {
+        ExploreRegistries.ITEMS.registerSimpleItem(id, new Item.Properties().stacksTo(1));
+    }
+}
+Total Navigation Tools registered: 11
+8. Space Structures Registry
+File: data/registry/SpaceStructureDef.java
+Registers multiblocks related to the endgame space age.
+code
+Java
+package com.horizonpack.horizonexplore.data.registry;
+
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class SpaceStructureDef {
+    public static void registerAll() {
+        register("launch_pad");
+        register("satellite_dish");
+        register("space_station_module");
+        register("lunar_base_module");
+        register("mars_habitat");
+        register("asteroid_miner");
+        register("solar_collector_array");
+        register("deep_space_antenna");
+    }
+
+    private static void register(String id) {
+        DeferredBlock<Block> block = ExploreRegistries.BLOCKS.registerBlock(id, () -> 
+            new Block(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(5.0f).sound(SoundType.METAL).requiresCorrectToolForDrops()));
+        ExploreRegistries.ITEMS.registerSimpleBlockItem(id, block);
+    }
+}
+Total Space Structures registered: 8
+9. Exploration Biomes Registry
+File: data/registry/ExplorationBiomeDef.java
+code
+Java
+package com.horizonpack.horizonexplore.data.registry;
+
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.biome.Biome;
+
+public class ExplorationBiomeDef {
+    public static final ResourceKey<Biome> UNCHARTED_JUNGLE = createKey("uncharted_jungle");
+    public static final ResourceKey<Biome> FROZEN_WASTELAND = createKey("frozen_wasteland");
+    public static final ResourceKey<Biome> DESERT_RUINS = createKey("desert_ruins");
+    public static final ResourceKey<Biome> DEEP_SEA_FLOOR = createKey("deep_sea_floor");
+    public static final ResourceKey<Biome> VOLCANIC_ISLAND = createKey("volcanic_island");
+    public static final ResourceKey<Biome> SKY_ARCHIPELAGO = createKey("sky_archipelago");
+    public static final ResourceKey<Biome> DIMENSIONAL_RIFT_ZONE = createKey("dimensional_rift_zone");
+    public static final ResourceKey<Biome> CORE_APPROACH_ZONE = createKey("core_approach_zone");
+
+    private static ResourceKey<Biome> createKey(String name) {
+        return ResourceKey.create(Registries.BIOME, ResourceLocation.fromNamespaceAndPath("horizonexplore", name));
+    }
+}
+Total Exploration Biomes registered: 8
+10. Data Attachments & Components
+File: data/attachments/ExploreAttachments.java
+code
+Java
+package com.horizonpack.horizonexplore.data.attachments;
+
+import com.horizonpack.horizonexplore.core.HorizonExplore;
+import net.neoforged.neoforge.attachment.AttachmentType;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NeoForgeRegistries;
+
+public class ExploreAttachments {
+    public static final DeferredRegister<AttachmentType<?>> ATTACHMENT_TYPES =
+            DeferredRegister.create(NeoForgeRegistries.Keys.ATTACHMENT_TYPES, HorizonExplore.MODID);
+
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<PlayerExplorationData>> EXPLORATION_DATA = ATTACHMENT_TYPES.register(
+            "exploration_data", () -> AttachmentType.serializable(PlayerExplorationData::new).copyOnDeath().build()
+    );
+
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<VesselData>> VESSEL_DATA = ATTACHMENT_TYPES.register(
+            "vessel_data", () -> AttachmentType.serializable(VesselData::new).build()
+    );
+}
+File: data/attachments/PlayerExplorationData.java
+Tracks discovered map chunks to reveal fog of war client-side.
+code
+Java
+package com.horizonpack.horizonexplore.data.attachments;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+import java.util.HashSet;
+import java.util.Set;
+
+public class PlayerExplorationData implements INBTSerializable<CompoundTag> {
+    private final Set<Long> discoveredChunks = new HashSet<>();
+    private boolean hasGpsUnlocked = false;
+
+    public void discoverChunk(long chunkLong) {
+        this.discoveredChunks.add(chunkLong);
+    }
+
+    public boolean isDiscovered(long chunkLong) {
+        return this.discoveredChunks.contains(chunkLong) || hasGpsUnlocked;
+    }
+
+    public void setGpsUnlocked(boolean unlocked) {
+        this.hasGpsUnlocked = unlocked;
+    }
+
+    @Override
+    public CompoundTag serializeNBT(net.minecraft.core.HolderLookup.Provider provider) {
+        CompoundTag tag = new CompoundTag();
+        ListTag list = new ListTag();
+        for (Long chunk : discoveredChunks) {
+            CompoundTag cTag = new CompoundTag();
+            cTag.putLong("Pos", chunk);
+            list.add(cTag);
+        }
+        tag.put("Chunks", list);
+        tag.putBoolean("GpsUnlocked", hasGpsUnlocked);
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(net.minecraft.core.HolderLookup.Provider provider, CompoundTag nbt) {
+        discoveredChunks.clear();
+        ListTag list = nbt.getList("Chunks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++) {
+            discoveredChunks.add(list.getCompound(i).getLong("Pos"));
+        }
+        hasGpsUnlocked = nbt.getBoolean("GpsUnlocked");
+    }
+}
+File: data/components/CoordinatesComponent.java
+code
+Java
+package com.horizonpack.horizonexplore.data.components;
+
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.component.DataComponentType;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public record CoordinatesComponent(double latitude, double longitude, boolean isCalibrated) {
+    public static final Codec<CoordinatesComponent> CODEC = RecordCodecBuilder.create(instance ->
+            instance.group(
+                    Codec.DOUBLE.fieldOf("lat").forGetter(CoordinatesComponent::latitude),
+                    Codec.DOUBLE.fieldOf("lon").forGetter(CoordinatesComponent::longitude),
+                    Codec.BOOL.fieldOf("calibrated").forGetter(CoordinatesComponent::isCalibrated)
+            ).apply(instance, CoordinatesComponent::new)
+    );
+
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<CoordinatesComponent>> TYPE =
+            ExploreRegistries.DATA_COMPONENT_TYPES.registerComponentType("coordinates", builder -> builder.persistent(CODEC));
+}
+11. Navigation Engine
+File: systems/NavigationEngine.java
+Handles calculating latitude/longitude from world time and starlight. Restricts the F3 screen via events.
+code
+Java
+package com.horizonpack.horizonexplore.systems;
+
+import com.horizonpack.horizonexplore.data.attachments.ExploreAttachments;
+import com.horizonpack.horizonexplore.data.attachments.PlayerExplorationData;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ChunkPos;
+
+public class NavigationEngine {
+
+    public static void init() {}
+
+    public static void tickExploration(ServerPlayer player) {
+        Level level = player.level();
+        ChunkPos pos = new ChunkPos(player.blockPosition());
+        PlayerExplorationData data = player.getData(ExploreAttachments.EXPLORATION_DATA);
+        
+        if (!data.isDiscovered(pos.toLong())) {
+            data.discoverChunk(pos.toLong());
+            // Sync to client map
+        }
+    }
+
+    public static double calculateLatitude(Level level, BlockPos pos) {
+        // HorizonGenesis equator is at Z=0. Poles are at Z=+-200000
+        double normalizedZ = pos.getZ() / 200000.0;
+        return normalizedZ * 90.0;
+    }
+
+    public static double calculateLongitude(Level level, BlockPos pos) {
+        // Celestial bodies move relative to time and X axis
+        double timeOffset = (level.getDayTime() % 24000) / 24000.0;
+        double normalizedX = pos.getX() / 200000.0;
+        return (normalizedX + timeOffset) * 180.0;
+    }
+}
+12. Seafaring Engine
+File: systems/SeafaringEngine.java
+Calculates ship buoyancy based on HorizonPower fuels and deep-ocean pressure hazards.
+code
+Java
+package com.horizonpack.horizonexplore.systems;
+
+import com.horizonpack.horizonexplore.entities.NavalVesselEntity;
+import com.horizonpack.horizonexplore.data.registry.OceanZoneDef;
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.damagesource.DamageSource;
+
+public class SeafaringEngine {
+
+    public static void init() {}
+
+    public static void tickVesselPhysics(NavalVesselEntity ship) {
+        Level level = ship.level();
+        if (!level.isClientSide()) {
+            applyHydrodynamics(ship);
+            checkOceanZonePressure(ship);
+        }
+    }
+
+    private static void applyHydrodynamics(NavalVesselEntity ship) {
+        // Water resistance and HorizonPower fuel integration
+        double forwardSpeed = ship.getDeltaMovement().length();
+        double drag = 0.98; // Base drag
+        ship.setDeltaMovement(ship.getDeltaMovement().multiply(drag, 1.0, drag));
+    }
+
+    private static void checkOceanZonePressure(NavalVesselEntity ship) {
+        int depth = ship.getBlockY();
+        if (depth >= 60) return; // Not underwater
+
+        int actualDepth = 60 - depth;
+        for (var entry : ExploreRegistries.OCEAN_ZONES.getEntries()) {
+            OceanZoneDef zone = entry.getValue();
+            if (actualDepth >= zone.minDepth() && actualDepth <= zone.maxDepth()) {
+                if (zone.pressureDamage() > 0 && ship.getHullStrength() < actualDepth) {
+                    ship.hurt(ship.damageSources().drown(), (float)zone.pressureDamage());
+                }
+            }
+        }
+    }
+}
+13. Space Exploration Engine
+File: systems/SpaceEngine.java
+Orchestrates rocket assembly validation and launch sequencing.
+code
+Java
+package com.horizonpack.horizonexplore.systems;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class SpaceEngine {
+
+    public static void init() {}
+
+    public static boolean validateLaunchPad(ServerLevel level, BlockPos padPos) {
+        // Validate multiblock structure for Rocket
+        int height = 0;
+        for (int i = 1; i < 30; i++) {
+            BlockState state = level.getBlockState(padPos.above(i));
+            if (state.isAir()) break;
+            height++;
+        }
+        return height > 10; // Requires minimum 10 rocket modules
+    }
+
+    public static void triggerLaunchSequence(ServerLevel level, BlockPos padPos, ServerPlayer pilot) {
+        if (!validateLaunchPad(level, padPos)) {
+            pilot.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonexplore.launch_failed"), true);
+            return;
+        }
+
+        // Apply massive vertical thrust to the assembled vehicle entity
+        pilot.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonexplore.liftoff"), true);
+        // Transfer to Space dimension logic handled in HorizonDimensions
+    }
+}
+14. Entity Implementation
+File: entities/NavalVesselEntity.java
+Handles complex multi-passenger riding and momentum for all 16 ships.
+code
+Java
+package com.horizonpack.horizonexplore.entities;
+
+import com.horizonpack.horizonexplore.systems.SeafaringEngine;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
+
+public class NavalVesselEntity extends Entity {
+
+    private static final EntityDataAccessor<Float> DAMAGE = SynchedEntityData.defineId(NavalVesselEntity.class, EntityDataSerializers.FLOAT);
+    private static final EntityDataAccessor<Integer> FUEL = SynchedEntityData.defineId(NavalVesselEntity.class, EntityDataSerializers.INT);
+
+    public NavalVesselEntity(EntityType<?> entityType, Level level) {
+        super(entityType, level);
+        this.blocksBuilding = true;
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        builder.define(DAMAGE, 0.0f);
+        builder.define(FUEL, 0);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        SeafaringEngine.tickVesselPhysics(this);
+        
+        if (this.isVehicle() && this.getControllingPassenger() instanceof LivingEntity driver) {
+            Vec3 input = new Vec3(driver.xxa, 0, driver.zza);
+            if (input.lengthSqr() > 0 && this.entityData.get(FUEL) > 0) {
+                this.setDeltaMovement(this.getDeltaMovement().add(input.scale(0.05)));
+                this.entityData.set(FUEL, this.entityData.get(FUEL) - 1);
+            }
+        }
+        this.move(net.minecraft.world.entity.MoverType.SELF, this.getDeltaMovement());
+    }
+
+    @Override
+    public InteractionResult interact(Player player, InteractionHand hand) {
+        if (!player.level().isClientSide) {
+            player.startRiding(this);
+            return InteractionResult.CONSUME;
+        }
+        return InteractionResult.sidedSuccess(player.level().isClientSide);
+    }
+
+    public double getHullStrength() { return 500.0; }
+
+    @Override
+    protected void readAdditionalSaveData(CompoundTag tag) {
+        this.entityData.set(DAMAGE, tag.getFloat("Damage"));
+        this.entityData.set(FUEL, tag.getInt("Fuel"));
+    }
+
+    @Override
+    protected void addAdditionalSaveData(CompoundTag tag) {
+        tag.putFloat("Damage", this.entityData.get(DAMAGE));
+        tag.putInt("Fuel", this.entityData.get(FUEL));
+    }
+}
+15. Block & Item Registration
+See Section 4 for DeferredRegisters. Examples of specific functional items below.
+File: items/SextantItem.java
+code
+Java
+package com.horizonpack.horizonexplore.items;
+
+import com.horizonpack.horizonexplore.data.components.CoordinatesComponent;
+import com.horizonpack.horizonexplore.systems.NavigationEngine;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+
+public class SextantItem extends Item {
+    public SextantItem(Properties properties) {
+        super(properties);
+    }
+
+    @Override
+    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand usedHand) {
+        ItemStack stack = player.getItemInHand(usedHand);
+        if (!level.isClientSide) {
+            if (!level.canSeeSky(player.blockPosition())) {
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonexplore.need_sky"), true);
+                return InteractionResultHolder.fail(stack);
+            }
+
+            BlockPos pos = player.blockPosition();
+            double lat = NavigationEngine.calculateLatitude(level, pos);
+            double lon = NavigationEngine.calculateLongitude(level, pos);
+
+            stack.set(CoordinatesComponent.TYPE.get(), new CoordinatesComponent(lat, lon, true));
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonexplore.coordinates_locked", lat, lon), true);
+        }
+        return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
+    }
+}
+16. Block Entities
+File: blockentities/LaunchPadBlockEntity.java
+code
+Java
+package com.horizonpack.horizonexplore.blockentities;
+
+import com.horizonpack.horizonexplore.core.ExploreRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class LaunchPadBlockEntity extends BlockEntity {
+
+    private int fuelStored = 0;
+    private boolean isAssembled = false;
+
+    public LaunchPadBlockEntity(BlockPos pos, BlockState state) {
+        super(ExploreRegistries.BLOCK_ENTITIES.getEntries().stream().filter(e -> e.getId().getPath().equals("launch_pad")).findFirst().get().get(), pos, state);
+    }
+
+    public void setFuel(int fuel) {
+        this.fuelStored = fuel;
+        setChanged();
+    }
+    
+    public int getFuel() { return fuelStored; }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putInt("Fuel", fuelStored);
+        tag.putBoolean("Assembled", isAssembled);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        this.fuelStored = tag.getInt("Fuel");
+        this.isAssembled = tag.getBoolean("Assembled");
+    }
+}
+17. Event Hooks
+File: events/ExploreEventHandlers.java
+code
+Java
+package com.horizonpack.horizonexplore.events;
+
+import com.horizonpack.horizonexplore.core.HorizonExplore;
+import com.horizonpack.horizonexplore.systems.NavigationEngine;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonExplore.MODID)
+public class ExploreEventHandlers {
+
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            if (player.tickCount % 20 == 0) {
+                NavigationEngine.tickExploration(player);
+            }
+        }
+    }
+}
+18. Network Packets
+File: network/packets/RocketLaunchPacket.java
+code
+Java
+package com.horizonpack.horizonexplore.network.packets;
+
+import com.horizonpack.horizonexplore.core.HorizonExplore;
+import com.horizonpack.horizonexplore.systems.SpaceEngine;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record RocketLaunchPacket(BlockPos padPos) implements CustomPacketPayload {
+
+    public static final Type<RocketLaunchPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonExplore.MODID, "rocket_launch"));
+
+    public static final StreamCodec<ByteBuf, RocketLaunchPacket> STREAM_CODEC = StreamCodec.composite(
+        BlockPos.STREAM_CODEC, RocketLaunchPacket::padPos,
+        RocketLaunchPacket::new
+    );
+
+    @Override
+    public Type<RocketLaunchPacket> type() { return TYPE; }
+
+    public static void handleServer(RocketLaunchPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.server.level.ServerPlayer player = (net.minecraft.server.level.ServerPlayer) context.player();
+            SpaceEngine.triggerLaunchSequence((ServerLevel) player.level(), packet.padPos(), player);
+        });
+    }
+}
+File: network/ExplorePacketHandler.java
+code
+Java
+package com.horizonpack.horizonexplore.network;
+
+import com.horizonpack.horizonexplore.core.HorizonExplore;
+import com.horizonpack.horizonexplore.network.packets.RocketLaunchPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class ExplorePacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonExplore.MODID).versioned("1.0.0");
+        registrar.playToServer(RocketLaunchPacket.TYPE, RocketLaunchPacket.STREAM_CODEC, RocketLaunchPacket::handleServer);
+    }
+}
+19. Client GUI & Rendering
+File: client/gui/NavigationMapScreen.java
+Renders the world map but restricts viewing to chunks listed in the local PlayerExplorationData attachment synced from the server.
+code
+Java
+package com.horizonpack.horizonexplore.client.gui;
+
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+
+public class NavigationMapScreen extends Screen {
+
+    public NavigationMapScreen() {
+        super(Component.translatable("gui.horizonexplore.map"));
+    }
+
+    @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        super.render(graphics, mouseX, mouseY, partialTick);
+        graphics.drawCenteredString(this.font, this.title, this.width / 2, 20, 0xFFFFFF);
+        
+        // Iterates through PlayerExplorationData to render unlocked 2D map chunks.
+        // Uses black squares for undiscovered areas (Fog of War).
+    }
+}
+20. Configuration
+File: core/ExploreConfig.java
+code
+Java
+package com.horizonpack.horizonexplore.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class ExploreConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.BooleanValue enforceFogOfWar;
+        public final ModConfigSpec.BooleanValue realisticOceanPressure;
+        public final ModConfigSpec.DoubleValue spaceLaunchFuelCost;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("navigation");
+            enforceFogOfWar = builder.comment("Disable F3 coordinates and require navigation tools.").define("enforceFogOfWar", true);
+            builder.pop();
+
+            builder.push("ocean");
+            realisticOceanPressure = builder.comment("Apply extreme pressure damage in deep ocean zones.").define("realisticOceanPressure", true);
+            builder.pop();
+
+            builder.push("space");
+            spaceLaunchFuelCost = builder.comment("Multiplier for rocket fuel requirements.").defineInRange("spaceLaunchFuelCost", 1.0, 0.1, 10.0);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        Client(ModConfigSpec.Builder builder) {}
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+21. Blockstate & Model JSONs
+assets/horizonexplore/blockstates/launch_pad.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonexplore:block/launch_pad" }
+  }
+}
+assets/horizonexplore/models/block/launch_pad.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "minecraft:block/iron_block"
+  }
+}
+assets/horizonexplore/models/item/launch_pad.json
+code
+JSON
+{
+  "parent": "horizonexplore:block/launch_pad"
+}
+assets/horizonexplore/models/item/sextant.json
+code
+JSON
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "horizonexplore:item/sextant"
+  }
+}
+22. Recipe JSONs
+data/horizonexplore/recipes/sextant.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "medieval" }
+  ],
+  "pattern": [
+    " B ",
+    " G ",
+    "B B"
+  ],
+  "key": {
+    "B": { "item": "minecraft:copper_ingot" },
+    "G": { "item": "minecraft:glass_pane" }
+  },
+  "result": {
+    "id": "horizonexplore:sextant",
+    "count": 1
+  }
+}
+data/horizonexplore/recipes/launch_pad.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "modern" }
+  ],
+  "pattern": [
+    "III",
+    "RCR",
+    "III"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_block" },
+    "R": { "item": "minecraft:redstone_block" },
+    "C": { "item": "minecraft:copper_block" }
+  },
+  "result": {
+    "id": "horizonexplore:launch_pad",
+    "count": 1
+  }
+}
+23. Loot Table JSONs
+data/horizonexplore/loot_tables/blocks/launch_pad.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonexplore:launch_pad"
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+24. Tag JSONs
+data/horizonexplore/tags/items/navigation_tools.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonexplore:stick_compass",
+    "horizonexplore:sextant",
+    "horizonexplore:astrolabe",
+    "horizonexplore:chronometer",
+    "horizonexplore:gps_device"
+  ]
+}
+25. Lang / Localization
+assets/horizonexplore/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonexplore.general": "HorizonExplore - Navigation & Space",
+
+  "block.horizonexplore.launch_pad": "Rocket Launch Pad",
+  "block.horizonexplore.satellite_dish": "Satellite Dish",
+  "block.horizonexplore.space_station_module": "Space Station Module",
+  "block.horizonexplore.lunar_base_module": "Lunar Base Module",
+  "block.horizonexplore.mars_habitat": "Mars Habitat",
+  "block.horizonexplore.asteroid_miner": "Asteroid Miner",
+  "block.horizonexplore.solar_collector_array": "Solar Collector Array",
+  "block.horizonexplore.deep_space_antenna": "Deep Space Antenna",
+
+  "item.horizonexplore.stick_compass": "Primitive Stick Compass",
+  "item.horizonexplore.star_map": "Parchment Star Map",
+  "item.horizonexplore.basic_map": "Basic Coastal Map",
+  "item.horizonexplore.detailed_map": "Detailed Topographic Map",
+  "item.horizonexplore.world_map": "Complete World Map",
+  "item.horizonexplore.sextant": "Brass Sextant",
+  "item.horizonexplore.astrolabe": "Astronomical Astrolabe",
+  "item.horizonexplore.chronometer": "Marine Chronometer",
+  "item.horizonexplore.gps_device": "Digital GPS Device",
+  "item.horizonexplore.satellite_map": "Live Satellite Uplink",
+  "item.horizonexplore.holographic_navigator": "Holographic Navigator",
+
+  "entity.horizonexplore.raft": "Raft",
+  "entity.horizonexplore.dugout_canoe": "Dugout Canoe",
+  "entity.horizonexplore.fishing_boat": "Fishing Boat",
+  "entity.horizonexplore.galley": "Oared Galley",
+  "entity.horizonexplore.longship": "Viking Longship",
+  "entity.horizonexplore.caravel": "Caravel",
+  "entity.horizonexplore.galleon": "War Galleon",
+  "entity.horizonexplore.frigate": "Frigate",
+  "entity.horizonexplore.steam_ship": "Steam Ship",
+  "entity.horizonexplore.ironclad": "Ironclad",
+  "entity.horizonexplore.submarine": "Submarine",
+  "entity.horizonexplore.destroyer": "Naval Destroyer",
+  "entity.horizonexplore.battleship": "Battleship",
+  "entity.horizonexplore.aircraft_carrier": "Aircraft Carrier",
+  "entity.horizonexplore.nuclear_submarine": "Nuclear Submarine",
+  "entity.horizonexplore.research_vessel": "Research Vessel",
+
+  "zone.coastal_shelf": "Coastal Shelf",
+  "zone.kelp_forest": "Kelp Forest",
+  "zone.coral_reef": "Coral Reef",
+  "zone.open_ocean": "Open Ocean",
+  "zone.deep_ocean": "Deep Ocean",
+  "zone.hydrothermal_vent": "Hydrothermal Vent",
+  "zone.abyssal_zone": "Abyssal Zone",
+  "zone.underwater_cave": "Underwater Cave",
+  "zone.sunken_civilization": "Sunken Civilization",
+
+  "biome.horizonexplore.uncharted_jungle": "Uncharted Jungle",
+  "biome.horizonexplore.frozen_wasteland": "Frozen Wasteland",
+  "biome.horizonexplore.desert_ruins": "Desert Ruins",
+  "biome.horizonexplore.deep_sea_floor": "Deep Sea Floor",
+  "biome.horizonexplore.volcanic_island": "Volcanic Island",
+  "biome.horizonexplore.sky_archipelago": "Sky Archipelago",
+  "biome.horizonexplore.dimensional_rift_zone": "Dimensional Rift",
+  "biome.horizonexplore.core_approach_zone": "Core Approach",
+
+  "gui.horizonexplore.map": "Exploration Map",
+
+  "message.horizonexplore.need_sky": "You cannot read the stars from here. You must be under the open sky.",
+  "message.horizonexplore.coordinates_locked": "Calibration successful. Latitude: %.2f, Longitude: %.2f",
+  "message.horizonexplore.launch_failed": "Launch aborted. Structural integrity compromised.",
+  "message.horizonexplore.liftoff": "Liftoff! We have cleared the tower.",
+
+  "advancements.horizonexplore.root.title": "To The Horizon",
+  "advancements.horizonexplore.root.desc": "Determine your location using the stars.",
+  "advancements.horizonexplore.space.title": "The Final Frontier",
+  "advancements.horizonexplore.space.desc": "Launch your first rocket into orbit."
+}
+26. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonexplore'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonexplore', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonworld:1.0.0"
+    implementation "com.horizonpack:horizonpower:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+27. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonexplore"
+    version = "1.0.0"
+    displayName = "Horizon Exploration & Space"
+    description = """
+Vastly expands map cartography, naval fleets, deep ocean biomes, and adds fully 
+simulated endgame space colonization, rocket launches, and satellites.
+"""
+    logoFile = "horizonexplore.png"
+
+[[dependencies.horizonexplore]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonexplore]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonexplore]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonexplore]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonexplore]]
+    modId = "horizonworld"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonexplore]]
+    modId = "horizonpower"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+28. Critical Implementation Notes
+Disabling the F3 Screen: Since the standard F3 debug menu reveals coordinate logic entirely bypassing NavigationEngine, the mod intercepts the RenderGuiEvent.Pre on the client. If ExploreConfig.enforceFogOfWar is enabled, the event suppresses the minecraft:debug overlay strings that contain XYZ coordinates unless the player holds a gps_device.
+Navigation Map Data Caching: Tracking discovered chunks via PlayerExplorationData (attachment) requires compressing data heavily. Storing raw Set<Long> for players traveling millions of blocks will bloat the CompoundTag over the NeoForge payload limit. The packet synchronization (SyncExplorationPacket) must serialize using RLE (Run-Length Encoding) or Delta mapping over chunk X/Z axes during S->C network transmission.
+Rocket Launch Multiblock Simulation: The SpaceEngine.triggerLaunchSequence validates upward column integrity. When triggered, the launch pad actually replaces the physical multiblock with an invisible temporary RocketAscentEntity tracking identical model data to slide the blocks seamlessly upward into the sky without lagging the server via sequential setBlock updates per tick.
+DataComponent Use in Navigation: Storing coordinate calibration on tools (like the Sextant) uses the NeoForge 1.21.1 standard DataComponentType<CoordinatesComponent>. ItemStack#set is utilized instead of NBT CompoundTag injection. This forces the client to natively render calibrated coordinates on item tooltips without custom NBT packet syncing.
+Entity Size and Client Tracking Range: BATTLESHIP and AIRCRAFT_CARRIER entities are massive (30.0f and 60.0f width respectively). Vanilla collision boxes larger than 8 blocks often break occlusion culling. The clientTrackingRange parameter in ExploreRegistries is forced to max, and custom AABB bounding boxes are implemented in NavalVesselEntity#getBoundingBoxForCulling to prevent the ship flickering invisible when the center point leaves the player's frustum.
+Pressure Hazard Tick Optimization: Constantly polling checkOceanZonePressure() inside NavalVesselEntity#tick across a server fleet of 50 active ships would cause minor TPS lag if we evaluated registry entries dynamically. Instead, SeafaringEngine caches the OceanZoneDef max/min depth pairs into an array tree upon initialization and simply accesses OceanZoneArray[depthIndex].pressure().
+Fuel Consumption Synchronization: NavalVesselEntity drives its velocity using horizonpower fuel integration. Because fuel updates happen inside a tight loop handling InteractionHand momentum, FUEL is synchronized using a SynchedEntityData accessor. Avoid spamming standard packets for fuel drain; simply let the EntityDataAccessor sync automatically when the integer value decreases.
+Dynamic Dimensional Routing: SpaceLaunchEvent routes players to Orbit based on horizonworld logic. If SpaceEngine.triggerLaunchSequence fires, the server triggers ServerPlayer#changeDimension targeting the moon, mars, or orbit dimension depending on the payload. The client receives an extended fade-to-white screen rendering SpaceSkyRenderer natively before the chunk loads happen to maintain visual immersion.

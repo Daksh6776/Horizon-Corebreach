@@ -1,0 +1,2437 @@
+# HorizonData — Detailed Technical Specification
+**Mod ID:** `horizondata`  
+**Version:** 1.0.0  
+**Platform:** NeoForge 1.21.1 / Java 21  
+**Role:** Item, Block, Ore, Material, Fuel, and Crafting Registry — required by most Horizon mods  
+**Absorbed mods:** HorizonOres, HorizonCraft, HorizonBlocks, HorizonFuels  
+**Depends on:** HorizonCore (horizoncore)
+
+---
+
+## Table of Contents
+1. [Overview & Responsibilities](#1-overview--responsibilities)
+2. [File & Package Structure](#2-file--package-structure)
+3. [Mod Entry Point](#3-mod-entry-point)
+4. [Ore & Material System](#4-ore--material-system)
+5. [Block Registry — All Block Shapes & Materials](#5-block-registry--all-block-shapes--materials)
+6. [Item Registry — All Items](#6-item-registry--all-items)
+7. [Fuel System](#7-fuel-system)
+8. [Crafting & Workshop System](#8-crafting--workshop-system)
+9. [Ore Processing Pipeline](#9-ore-processing-pipeline)
+10. [Block Entities](#10-block-entities)
+11. [Structural Integrity System](#11-structural-integrity-system)
+12. [Material Properties System](#12-material-properties-system)
+13. [Event Hooks](#13-event-hooks)
+14. [Network Packets](#14-network-packets)
+15. [Configuration](#15-configuration)
+16. [Data Pack Integration](#16-data-pack-integration)
+17. [Blockstate & Model JSONs](#17-blockstate--model-jsons)
+18. [Recipe JSONs](#18-recipe-jsons)
+19. [Loot Table JSONs](#19-loot-table-jsons)
+20. [Tag JSONs](#20-tag-jsons)
+21. [Lang / Localization](#21-lang--localization)
+22. [build.gradle](#22-buildgradle)
+23. [neoforge.mods.toml](#23-neoforgemodstom)
+24. [Critical Implementation Notes](#24-critical-implementation-notes)
+
+---
+
+## 1. Overview & Responsibilities
+
+HorizonData is the **single material and crafting registry** for the entire Horizon modpack. It provides:
+
+- **All ore blocks** — 25+ ore types with geologically accurate placement data  
+- **All raw material items** — raw ores, ingots, dusts, crystals, fluids  
+- **All block shapes** — slopes, arches, pillars, beams, carved, multi-material  
+- **All wood and stone types** — 20+ wood variants, 15+ stone variants  
+- **Composite and manufactured materials** — concrete, reinforced blocks, alloys  
+- **The Fuel system** — per-fuel heat value, burn duration, age unlock, pollution output  
+- **The Workshop system** — Forge, Carpentry Bench, Loom, Alchemy Lab, Kitchen, Tannery, Pottery Wheel, Bloomery, Crucible, Anvil, Grindstone, Workbench  
+- **The Ore Processing Pipeline** — six-step refinement chain from raw ore → alloy  
+- **The Structural Integrity system** — load-bearing calculations, collapse mechanics  
+- **The Material Properties system** — melting point, hardness, density, conductivity, corrosion resistance, temperature resistance  
+- **All crafting recipes** for workshops (custom `IRecipeType` per workshop)  
+- **All tags** (`c:ores/`, `c:ingots/`, `c:dusts/`, `horizondata:` tags for age gating)  
+
+Every other Horizon mod that needs materials, fuel, or crafting pulls from this mod's registries.
+
+---
+
+## 2. File & Package Structure
+
+```
+horizon_data/
+├── src/main/java/com/horizonpack/horizondata/
+│   ├── core/
+│   │   ├── HorizonData.java                    ← @Mod entry point
+│   │   ├── DataRegistries.java                 ← All DeferredRegisters
+│   │   └── DataConfig.java                     ← ModConfigSpec
+│   ├── data/
+│   │   ├── OreDefinition.java                  ← Data object: ore node definition
+│   │   ├── MaterialDefinition.java             ← Data object: processed material properties
+│   │   ├── FuelDefinition.java                 ← Data object: fuel type
+│   │   ├── AlloyRecipe.java                    ← Data: alloy formula (A% + B% = C)
+│   │   ├── WorkshopType.java                   ← Enum: all 12 workshop stations
+│   │   └── ProcessingStage.java                ← Enum: RAW → CRUSHED → WASHED → CONCENTRATED → SMELTED → REFINED → ALLOYED
+│   ├── blocks/
+│   │   ├── ores/
+│   │   │   ├── HorizonOreBlock.java            ← Base ore block (extends Block)
+│   │   │   └── OreBlockRegistry.java           ← Registers all 25 ores
+│   │   ├── shapes/
+│   │   │   ├── SlopeBlock.java                 ← VoxelShape-based slope (5 angles)
+│   │   │   ├── ArchBlock.java                  ← Full/half arch with direction property
+│   │   │   ├── PillarBlock.java                ← Round/square/hex pillar, axis property
+│   │   │   ├── BeamBlock.java                  ← Horizontal beam, waterloggable
+│   │   │   ├── CarvedBlock.java                ← Decorative carved face, facing property
+│   │   │   └── BrickBondBlock.java             ← Running/stack/Flemish bond pattern
+│   │   ├── materials/
+│   │   │   ├── WoodBlock.java                  ← Per-wood-species block (log, plank, slab, stair)
+│   │   │   ├── StoneBlock.java                 ← Per-stone-type block (raw, polished, brick, tile)
+│   │   │   ├── MetalBlock.java                 ← Per-metal storage block
+│   │   │   ├── CompositeBlock.java             ← Concrete, reinforced concrete, composite materials
+│   │   │   └── WeatheringBlock.java            ← Tracks weather age (0–4 stages)
+│   │   └── workshops/
+│   │       ├── ForgeBlock.java                 ← Forge furnace (multi-block optional)
+│   │       ├── CarpentryBenchBlock.java        ← Carpentry station
+│   │       ├── LoomBlock.java                  ← Textile loom
+│   │       ├── AlchemyLabBlock.java            ← Alchemy / chemistry lab
+│   │       ├── KitchenBlock.java               ← Cooking station
+│   │       ├── TanneryBlock.java               ← Leather processing
+│   │       ├── PotteryWheelBlock.java          ← Clay forming
+│   │       ├── BloomeryBlock.java              ← Primitive iron smelting
+│   │       ├── CrucibleBlock.java              ← High-temp alloy melting
+│   │       ├── AnvilBlock.java                 ← Smithing + hammering
+│   │       ├── GrindstoneBlock.java            ← Sharpening, ore grinding
+│   │       └── WorkbenchBlock.java             ← General crafting (replaces vanilla)
+│   ├── blockentities/
+│   │   ├── ForgeBlockEntity.java               ← Fuel slot, input slots, heat tracking, recipe processing
+│   │   ├── CarpentryBenchBlockEntity.java
+│   │   ├── LoomBlockEntity.java
+│   │   ├── AlchemyLabBlockEntity.java
+│   │   ├── KitchenBlockEntity.java
+│   │   ├── TanneryBlockEntity.java
+│   │   ├── PotteryWheelBlockEntity.java
+│   │   ├── BloomeryBlockEntity.java
+│   │   ├── CrucibleBlockEntity.java
+│   │   ├── AnvilBlockEntity.java
+│   │   ├── GrindstoneBlockEntity.java
+│   │   └── WorkbenchBlockEntity.java
+│   ├── items/
+│   │   ├── RawOreItem.java                     ← Generic raw ore item
+│   │   ├── IngotItem.java                      ← Generic metal ingot item
+│   │   ├── DustItem.java                       ← Ground ore dust item
+│   │   ├── CrystalItem.java                    ← Gem/crystal item
+│   │   ├── NuggetItem.java                     ← Small metal nugget
+│   │   ├── PlateItem.java                      ← Hammered metal plate
+│   │   ├── WireItem.java                       ← Drawn wire (electrical, late game)
+│   │   ├── GearItem.java                       ← Machined gear (industrial)
+│   │   ├── RodItem.java                        ← Cast rod
+│   │   ├── ChunkItem.java                      ← Large raw ore chunk
+│   │   ├── FuelItem.java                       ← Fuel item wrapper (coal, oil, wood, etc.)
+│   │   └── AlloyIngotItem.java                 ← Combined alloy ingot
+│   ├── recipes/
+│   │   ├── ForgeRecipe.java                    ← IRecipeType for forge crafting
+│   │   ├── CarpentryRecipe.java
+│   │   ├── LoomRecipe.java
+│   │   ├── AlchemyRecipe.java
+│   │   ├── KitchenRecipe.java
+│   │   ├── TanneryRecipe.java
+│   │   ├── PotteryRecipe.java
+│   │   ├── BloomeryRecipe.java
+│   │   ├── CrucibleRecipe.java
+│   │   ├── AnvilRecipe.java
+│   │   ├── GrindstoneRecipe.java
+│   │   └── WorkbenchRecipe.java
+│   ├── systems/
+│   │   ├── StructuralIntegrity.java            ← Load bearing calculation engine
+│   │   ├── WeatheringSystem.java               ← Block aging / corrosion tick logic
+│   │   ├── FuelRegistry.java                   ← Runtime fuel heat map
+│   │   └── AlloyRegistry.java                  ← Runtime alloy formula registry
+│   ├── events/
+│   │   ├── DataEventHandlers.java              ← FurnaceFuelBurnEvent, BlockBreakEvent
+│   │   └── custom/
+│   │       ├── OreMinedEvent.java              ← Fired when player mines a horizon ore
+│   │       ├── WorkshopCraftEvent.java         ← Fired when a workshop produces output
+│   │       ├── AlloyCompletedEvent.java        ← Fired on successful alloy mix
+│   │       ├── StructureCollapseEvent.java     ← Fired when integrity fails
+│   │       └── MaterialWeatheredEvent.java     ← Fired when a block advances weather stage
+│   ├── network/
+│   │   ├── DataPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncWorkshopPacket.java         ← Workshop state S→C
+│   │       ├── WorkshopProgressPacket.java     ← Progress bar update S→C
+│   │       └── OpenWorkshopPacket.java         ← C→S open GUI request
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── ForgeScreen.java
+│   │   │   ├── CarpentryScreen.java
+│   │   │   ├── LoomScreen.java
+│   │   │   ├── AlchemyScreen.java
+│   │   │   ├── KitchenScreen.java
+│   │   │   ├── TanneryScreen.java
+│   │   │   ├── PotteryScreen.java
+│   │   │   ├── BloomeryScreen.java
+│   │   │   ├── CrucibleScreen.java
+│   │   │   ├── AnvilScreen.java
+│   │   │   ├── GrindstoneScreen.java
+│   │   │   └── WorkbenchScreen.java
+│   │   └── render/
+│   │       ├── SlopeBlockRenderer.java         ← Custom TESR for slopes (non-cubic)
+│   │       ├── WorkshopBlockEntityRenderer.java
+│   │       └── WeatheringOverlayRenderer.java  ← Renders rust/moss overlay on aged blocks
+│   └── utils/
+│       ├── MaterialHelper.java                 ← Utility: get material props by item
+│       ├── OreHelper.java                      ← Utility: get ore def by block
+│       └── FuelHelper.java                     ← Utility: get heat value by item
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizondata/
+│   │   ├── blockstates/                        ← All blockstate JSONs (listed in §17)
+│   │   ├── models/block/                       ← All block model JSONs
+│   │   ├── models/item/                        ← All item model JSONs
+│   │   ├── textures/block/                     ← All block textures (16x16 PNG)
+│   │   ├── textures/item/                      ← All item textures (16x16 PNG)
+│   │   ├── textures/gui/                       ← Workshop GUI textures (176x166)
+│   │   └── lang/en_us.json
+│   └── data/horizondata/
+│       ├── recipes/
+│       │   ├── forge/                          ← ForgeRecipe JSONs
+│       │   ├── carpentry/                      ← CarpentryRecipe JSONs
+│       │   ├── loom/
+│       │   ├── alchemy/
+│       │   ├── kitchen/
+│       │   ├── tannery/
+│       │   ├── pottery/
+│       │   ├── bloomery/
+│       │   ├── crucible/
+│       │   ├── anvil/
+│       │   ├── grindstone/
+│       │   └── workbench/
+│       ├── loot_tables/blocks/
+│       ├── tags/blocks/
+│       ├── tags/items/
+│       └── advancements/
+└── build.gradle
+```
+
+---
+
+## 3. Mod Entry Point
+
+**File:** `core/HorizonData.java`
+
+```java
+package com.horizonpack.horizondata.core;
+
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonData.MODID)
+public class HorizonData {
+    public static final String MODID = "horizondata";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonData(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, DataConfig.COMMON_SPEC);
+
+        // Register all deferred registers
+        DataRegistries.BLOCKS.register(modEventBus);
+        DataRegistries.ITEMS.register(modEventBus);
+        DataRegistries.BLOCK_ENTITIES.register(modEventBus);
+        DataRegistries.MENU_TYPES.register(modEventBus);
+        DataRegistries.RECIPE_TYPES.register(modEventBus);
+        DataRegistries.RECIPE_SERIALIZERS.register(modEventBus);
+        DataRegistries.CREATIVE_TABS.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(DataPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(DataEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            FuelRegistry.buildFuelMap();
+            AlloyRegistry.buildAlloyMap();
+            OreBlockRegistry.assignGeologicalData();
+        });
+    }
+}
+```
+
+---
+
+## 4. Ore & Material System
+
+### 4.1 OreDefinition
+
+**File:** `data/OreDefinition.java`
+
+Each ore is described by a data object that drives both world-gen placement and the processing pipeline.
+
+```java
+package com.horizonpack.horizondata.data;
+
+import com.horizonpack.horizoncore.data.HorizonAge;
+import net.minecraft.resources.ResourceLocation;
+import java.util.List;
+
+public record OreDefinition(
+    String oreId,                   // "iron", "copper", "tungsten" …
+    OreCategory category,           // COMMON / UNCOMMON / RARE / VERY_RARE / FUEL
+    GeologicalContext geology,       // where this ore forms geologically
+    int veinSizeMin,                // minimum blocks per vein
+    int veinSizeMax,                // maximum blocks per vein
+    int veinsPerChunk,              // average veins per chunk (at peak depth)
+    int depthMin,                   // minimum Y level
+    int depthMax,                   // maximum Y level (inclusive)
+    DepthDistribution distribution, // UNIFORM / TRIANGLE / TRAPEZOID / RARE_DEEP
+    List<ResourceLocation> validBiomeTags,   // biome tags where this ore can generate
+    List<ResourceLocation> invalidBiomeTags, // biome tags that exclude this ore
+    HorizonAge ageUnlock,           // earliest age the player can meaningfully use this
+    MaterialDefinition material,    // linked processed material data
+    List<String> requiresGeology    // geological markers required ("volcanic", "kimberlite", …)
+) {
+
+    public enum OreCategory { COMMON, UNCOMMON, RARE, VERY_RARE, FUEL, GEM }
+
+    public enum DepthDistribution {
+        UNIFORM,       // equal chance from depthMin to depthMax
+        TRIANGLE,      // peak in middle (like vanilla iron pre-1.18)
+        TRAPEZOID,     // flat top, tapers at edges
+        RARE_DEEP      // very low chance near surface, high chance at depthMin
+    }
+
+    public enum GeologicalContext {
+        IGNEOUS,        // volcanic / intrusive rock regions
+        SEDIMENTARY,    // ancient swamp / river delta deposits
+        METAMORPHIC,    // high-pressure regions near mountains
+        KIMBERLITE,     // ultra-deep volcanic pipe
+        HYDROTHERMAL,   // near hot springs / ocean vents
+        PLACER,         // river bed deposits
+        EVAPORITE,      // dried lake beds (salt, potash)
+        SUBSURFACE_OIL  // deep liquid pockets
+    }
+}
+```
+
+### 4.2 All Ore Definitions Table
+
+| Ore ID | Category | Geological Context | Depth Range (Y) | Veins/Chunk | Biome Requirement | Age Unlock |
+|---|---|---|---|---|---|---|
+| `iron` | COMMON | IGNEOUS / SEDIMENTARY | -64 → 72 | 12 | Any | Stone |
+| `copper` | COMMON | IGNEOUS / HYDROTHERMAL | -16 → 96 | 16 | Any | Stone |
+| `tin` | COMMON | SEDIMENTARY | -32 → 64 | 10 | Any | Copper |
+| `coal` | FUEL | SEDIMENTARY | 0 → 256 | 20 | Non-ocean | Stone |
+| `salt` | COMMON | EVAPORITE | 32 → 128 | 8 | Dry biomes, beaches | Stone |
+| `silver` | UNCOMMON | HYDROTHERMAL | -64 → 16 | 4 | Mountains, cold | Iron |
+| `lead` | UNCOMMON | SEDIMENTARY | -64 → 32 | 5 | Any | Copper |
+| `zinc` | UNCOMMON | IGNEOUS | -32 → 48 | 6 | Any | Copper |
+| `nickel` | UNCOMMON | IGNEOUS | -64 → 0 | 3 | Any | Iron |
+| `gold` | RARE | IGNEOUS / PLACER | -64 → 32 | 2 | Volcanic, desert | Copper |
+| `platinum` | RARE | IGNEOUS | -128 → -32 | 1 | Any | Industrial |
+| `tungsten` | RARE | METAMORPHIC | -128 → -64 | 1 | Mountains | Industrial |
+| `titanium` | RARE | IGNEOUS | -128 → -48 | 1 | Volcanic | Industrial |
+| `aluminum` | UNCOMMON | SEDIMENTARY (bauxite) | 0 → 128 | 6 | Tropical | Medieval |
+| `manganese` | UNCOMMON | SEDIMENTARY | -64 → 32 | 4 | Any | Iron |
+| `chromium` | UNCOMMON | IGNEOUS | -96 → -16 | 3 | Any | Industrial |
+| `cobalt` | UNCOMMON | IGNEOUS | -96 → -32 | 2 | Any | Industrial |
+| `uranium` | VERY_RARE | IGNEOUS / METAMORPHIC | -128 → -64 | 1 | Any | Modern |
+| `diamond` | GEM | KIMBERLITE | -128 → -64 | 1 | Any | Iron |
+| `emerald` | GEM | METAMORPHIC | -64 → 16 | 1 | Mountains | Iron |
+| `ruby` | GEM | IGNEOUS | -64 → 16 | 1 | Volcanic | Medieval |
+| `sapphire` | GEM | METAMORPHIC | -96 → 16 | 1 | Mountains | Medieval |
+| `oil` | FUEL | SUBSURFACE_OIL | -64 → 0 | varies | Continental C biomes | Industrial |
+| `natural_gas` | FUEL | SUBSURFACE_OIL | -32 → 32 | varies | Continental C biomes | Industrial |
+| `rare_earth` | VERY_RARE | IGNEOUS | -64 → 16 | 1 | Continental D biomes | Modern |
+
+### 4.3 MaterialDefinition
+
+**File:** `data/MaterialDefinition.java`
+
+```java
+package com.horizonpack.horizondata.data;
+
+public record MaterialDefinition(
+    String materialId,
+    int meltingPointCelsius,    // determines which furnace tier can process it
+    int hardness,               // 1-10 scale; determines required tool tier
+    double densityKgPerM3,      // affects weight / transport cost
+    double electricalConductivity,  // 0.0-1.0 scale; used for late-game wiring
+    double thermalConductivity,     // 0.0-1.0 scale; affects temperature mechanics
+    double corrosionResistance,     // 0.0-1.0 scale; affects weathering rate
+    boolean isMagnetic,             // needed for motor/generator crafting
+    int toxicity,               // 0-5 scale; affects handling safety
+    double smeltYield,          // ingots per ore unit (0.5-3.0)
+    int processingFurnaceTier   // 1=clay/stone, 2=brick, 3=blast, 4=electric arc
+) {}
+```
+
+### 4.4 All Material Properties Table
+
+| Material | Melting °C | Hardness | Density kg/m³ | Conductivity | Corrosion Resist | Furnace Tier | Notes |
+|---|---|---|---|---|---|---|---|
+| Iron | 1538 | 6 | 7874 | 0.17 | 0.20 | 2 | Rusts; needs tin-coating or alloying |
+| Copper | 1085 | 3 | 8960 | 0.97 | 0.55 | 1 | Best early conductor |
+| Tin | 232 | 2 | 7287 | 0.15 | 0.70 | 1 | Low melt; Bronze component |
+| Bronze (Cu+Sn) | 950 | 5 | 8800 | 0.15 | 0.70 | 1 | Harder than copper, resists rust |
+| Lead | 327 | 2 | 11340 | 0.05 | 0.80 | 1 | Heavy; radiation shielding |
+| Silver | 961 | 3 | 10490 | 0.99 | 0.90 | 1 | Best conductor pre-modern |
+| Gold | 1064 | 2 | 19300 | 0.73 | 1.00 | 1 | Decorative; corrosion-immune |
+| Steel (Fe+C) | 1480 | 7 | 7850 | 0.16 | 0.15 | 3 | Requires blast furnace + carbon |
+| Zinc | 420 | 3 | 7133 | 0.27 | 0.75 | 1 | Galvanizing iron (rust-proof) |
+| Nickel | 1455 | 5 | 8908 | 0.23 | 0.70 | 2 | Alloying; non-magnetic pure |
+| Aluminum | 660 | 3 | 2700 | 0.59 | 0.90 | 2 | Light; requires bauxite processing |
+| Manganese | 1246 | 6 | 7210 | 0.007 | 0.30 | 2 | Steel hardener; non-conductor |
+| Chromium | 1907 | 7 | 7190 | 0.10 | 0.95 | 3 | Stainless steel component |
+| Cobalt | 1495 | 6 | 8900 | 0.17 | 0.85 | 3 | High-temp alloys |
+| Tungsten | 3422 | 9 | 19250 | 0.31 | 0.75 | 4 | Hardest metal; needs electric arc |
+| Titanium | 1668 | 8 | 4507 | 0.03 | 0.98 | 4 | Light + strong; aerospace |
+| Platinum | 1768 | 5 | 21450 | 0.16 | 1.00 | 4 | Catalyst; reactor components |
+| Uranium | 1132 | 6 | 19100 | 0.03 | 0.65 | 4 | Nuclear fuel; toxic = 5 |
+| Stainless Steel | 1400 | 7 | 8000 | 0.10 | 0.95 | 3 | Fe+Cr+Ni |
+| Brass (Cu+Zn) | 900 | 4 | 8500 | 0.37 | 0.80 | 1 | Decorative; pressure fittings |
+| Electrum (Au+Ag) | 1000 | 2 | 14000 | 0.87 | 1.00 | 1 | Jewelry; early electronics |
+| Invar (Fe+Ni) | 1425 | 6 | 8050 | 0.14 | 0.55 | 3 | Low thermal expansion |
+| Constantan (Cu+Ni) | 1220 | 4 | 8900 | 0.05 | 0.65 | 2 | Thermocouple wire |
+| Titanium-Steel | 1550 | 9 | 6200 | 0.08 | 0.98 | 4 | Best structural alloy |
+
+---
+
+## 5. Block Registry — All Block Shapes & Materials
+
+### 5.1 DataRegistries (partial)
+
+**File:** `core/DataRegistries.java`
+
+```java
+package com.horizonpack.horizondata.core;
+
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.RecipeSerializer;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.minecraft.core.registries.BuiltInRegistries;
+
+public class DataRegistries {
+    public static final DeferredRegister<Block> BLOCKS =
+        DeferredRegister.create(BuiltInRegistries.BLOCK, HorizonData.MODID);
+
+    public static final DeferredRegister<Item> ITEMS =
+        DeferredRegister.create(BuiltInRegistries.ITEM, HorizonData.MODID);
+
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES =
+        DeferredRegister.create(BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonData.MODID);
+
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES =
+        DeferredRegister.create(BuiltInRegistries.MENU, HorizonData.MODID);
+
+    public static final DeferredRegister<RecipeType<?>> RECIPE_TYPES =
+        DeferredRegister.create(BuiltInRegistries.RECIPE_TYPE, HorizonData.MODID);
+
+    public static final DeferredRegister<RecipeSerializer<?>> RECIPE_SERIALIZERS =
+        DeferredRegister.create(BuiltInRegistries.RECIPE_SERIALIZER, HorizonData.MODID);
+
+    public static final DeferredRegister<CreativeModeTab> CREATIVE_TABS =
+        DeferredRegister.create(Registries.CREATIVE_MODE_TAB, HorizonData.MODID);
+}
+```
+
+### 5.2 Ore Blocks
+
+All 25 ores are registered with the pattern `<metal>_ore` (stone host) and `deepslate_<metal>_ore` (deepslate host below Y=0). Each uses `HorizonOreBlock` which stores the `OreDefinition` reference.
+
+```java
+// OreBlockRegistry.java — registration pattern
+for (OreDefinition def : ALL_ORE_DEFINITIONS) {
+    String id = def.oreId();
+    DataRegistries.BLOCKS.register(id + "_ore",
+        () -> new HorizonOreBlock(def, BlockBehaviour.Properties.of()
+            .mapColor(MapColor.STONE)
+            .requiresCorrectToolForDrops()
+            .strength(3.0f, 3.0f)));
+
+    DataRegistries.BLOCKS.register("deepslate_" + id + "_ore",
+        () -> new HorizonOreBlock(def, BlockBehaviour.Properties.of()
+            .mapColor(MapColor.DEEPSLATE)
+            .requiresCorrectToolForDrops()
+            .strength(4.5f, 3.0f)
+            .sound(SoundType.DEEPSLATE)));
+}
+```
+
+**Total ore blocks:** 50 (25 × stone host + 25 × deepslate host)  
+**Special cases:**  
+- `oil_deposit` — uses `OilDepositBlock` (fluid-like behaviour, requires pump to extract)  
+- `natural_gas_pocket` — uses `GasDepositBlock` (explosive when exposed to fire without containment)  
+- `salt_crystal_block` — surface-exposed crystal formation block  
+- `coal_ore` — also registers `lignite_ore` (lower quality coal, 40% heat value)  
+
+### 5.3 Wood Type Blocks
+
+Each of the 21 wood species registers the full vanilla set plus HorizonData extras:
+
+| Registry Key Pattern | Block Type |
+|---|---|
+| `<species>_log` | Pillar block, bark texture |
+| `<species>_stripped_log` | Stripped log |
+| `<species>_wood` | All-sides bark texture |
+| `<species>_stripped_wood` | Stripped wood |
+| `<species>_planks` | Solid plank block |
+| `<species>_slab` | Half-height slab |
+| `<species>_stairs` | Stair shape |
+| `<species>_fence` | Fence post + rail |
+| `<species>_fence_gate` | Gate block |
+| `<species>_door` | 2-tall door |
+| `<species>_trapdoor` | Trapdoor |
+| `<species>_pressure_plate` | Redstone plate |
+| `<species>_button` | Button |
+| `<species>_sign` | Standing + wall sign |
+| `<species>_hanging_sign` | Hanging sign |
+| `<species>_beam` | `BeamBlock` horizontal structural member |
+| `<species>_slope_45` | `SlopeBlock` 45° for roofing |
+| `<species>_slope_30` | `SlopeBlock` 30° |
+| `<species>_carved_plank` | `CarvedBlock` decorative |
+| `<species>_joist` | `BeamBlock` vertical support |
+
+**21 Wood Species:**
+`oak`, `birch`, `spruce`, `jungle`, `acacia`, `dark_oak`, `mangrove`, `cherry`, `bamboo`, `mahogany`, `teak`, `ebony`, `pine`, `cedar`, `willow`, `rubber_tree`, `palm`, `balsa`, `ironwood`, `petrified_wood` (stone-hard), `driftwood` (weathered variant)
+
+**Burn values by species (ticks per log):**
+- Balsa: 100 (light, burns fast)  
+- Oak/Birch/Spruce: 300  
+- Jungle/Acacia: 250  
+- Mahogany/Teak/Ebony: 400  
+- Pine/Cedar: 350  
+- Ironwood: 600 (dense hardwood)  
+- Rubber_tree: 200 (waxy, low heat)  
+- Petrified_wood: 0 (cannot burn)  
+
+### 5.4 Stone Type Blocks
+
+| Registry Key Pattern | Block Type |
+|---|---|
+| `<stone>` | Raw stone variant |
+| `<stone>_polished` | Polished face |
+| `<stone>_brick` | Brick pattern |
+| `<stone>_tile` | Fine tile pattern |
+| `<stone>_slab` | Slab |
+| `<stone>_stairs` | Stairs |
+| `<stone>_wall` | Wall |
+| `<stone>_chiseled` | Chiseled decorative |
+| `<stone>_pillar` | `PillarBlock` round variant |
+| `<stone>_arch` | `ArchBlock` |
+| `<stone>_slope_45` | `SlopeBlock` 45° |
+| `<stone>_slope_30` | `SlopeBlock` 30° |
+| `<stone>_carved` | `CarvedBlock` |
+
+**15 Stone Types:**
+`granite`, `diorite`, `andesite`, `limestone`, `marble`, `sandstone`, `red_sandstone`, `obsidian_brick`, `basalt_brick`, `slate`, `quartzite`, `travertine`, `pumice`, `shale`, `flint_block`
+
+**Stone properties (compressive strength, used by StructuralIntegrity):**
+| Stone | Strength kPa |
+|---|---|
+| Granite | 200,000 |
+| Marble | 100,000 |
+| Limestone | 60,000 |
+| Sandstone | 40,000 |
+| Pumice | 10,000 |
+| Basalt | 300,000 |
+| Quartzite | 250,000 |
+| Slate | 80,000 |
+
+### 5.5 Slope Block Implementation
+
+**File:** `blocks/shapes/SlopeBlock.java`
+
+```java
+package com.horizonpack.horizondata.blocks.shapes;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.*;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.phys.shapes.Shapes;
+
+public class SlopeBlock extends Block {
+
+    // Angles: 15, 30, 45, 60, 75 degrees
+    public static final EnumProperty<SlopeAngle> ANGLE =
+        EnumProperty.create("angle", SlopeAngle.class);
+    public static final DirectionProperty FACING =
+        HorizontalDirectionalBlock.FACING;
+    public static final BooleanProperty UPSIDEDOWN =
+        BlockStateProperties.HALF; // TOP = upside-down, BOTTOM = normal
+
+    // VoxelShape lookup table [ANGLE_INDEX][FACING_INDEX]
+    private static final VoxelShape[][] SHAPES = buildShapes();
+
+    public SlopeBlock(Properties properties) {
+        super(properties);
+        this.registerDefaultState(this.stateDefinition.any()
+            .setValue(ANGLE, SlopeAngle.DEG_45)
+            .setValue(FACING, Direction.NORTH)
+            .setValue(UPSIDEDOWN, false));
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(ANGLE, FACING, UPSIDEDOWN);
+    }
+
+    @Override
+    public VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
+        int angleIdx = state.getValue(ANGLE).ordinal();
+        int facingIdx = state.getValue(FACING).get2DDataValue();
+        boolean flipped = state.getValue(UPSIDEDOWN);
+        VoxelShape base = SHAPES[angleIdx][facingIdx];
+        return flipped ? flipVertical(base) : base;
+    }
+
+    @Override
+    public BlockState getStateForPlacement(BlockPlaceContext context) {
+        Direction facing = context.getHorizontalDirection().getOpposite();
+        boolean top = context.getClickedFace() == Direction.DOWN ||
+            (context.getClickedFace() != Direction.UP &&
+             context.getClickLocation().y - context.getClickedPos().getY() > 0.5);
+        return this.defaultBlockState()
+            .setValue(FACING, facing)
+            .setValue(UPSIDEDOWN, top);
+    }
+
+    public enum SlopeAngle implements StringRepresentable {
+        DEG_15("15"), DEG_30("30"), DEG_45("45"), DEG_60("60"), DEG_75("75");
+        private final String name;
+        SlopeAngle(String name) { this.name = name; }
+        @Override public String getSerializedName() { return name; }
+    }
+
+    private static VoxelShape[][] buildShapes() {
+        // 5 angles × 4 horizontal directions
+        VoxelShape[][] shapes = new VoxelShape[5][4];
+        // DEG_45, NORTH example:
+        shapes[2][0] = Shapes.or(
+            Block.box(0,0,0, 16,8,16),      // bottom half solid
+            Block.box(0,8,0, 16,16,8)       // back-half top
+        );
+        // ... (all 20 combinations computed similarly)
+        return shapes;
+    }
+
+    private static VoxelShape flipVertical(VoxelShape s) {
+        // Mirror shape around Y=8 axis
+        return s.move(0, -1, 0); // simplified; real impl uses Shapes.join
+    }
+}
+```
+
+### 5.6 Workshop Blocks
+
+All 12 workshop blocks extend `BaseEntityBlock` and implement `MenuProvider`.
+
+```java
+// ForgeBlock.java — representative example
+package com.horizonpack.horizondata.blocks.workshops;
+
+import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.*;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.Level;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+
+public class ForgeBlock extends BaseEntityBlock {
+
+    public static final BooleanProperty LIT = BlockStateProperties.LIT;
+    public static final DirectionProperty FACING = HorizontalDirectionalBlock.FACING;
+    public static final IntegerProperty HEAT_LEVEL = IntegerProperty.create("heat", 0, 4);
+    // heat 0=cold, 1=warm, 2=hot, 3=very_hot, 4=max — drives model variant + recipe gating
+
+    public ForgeBlock(Properties props) {
+        super(props);
+        this.registerDefaultState(this.stateDefinition.any()
+            .setValue(LIT, false)
+            .setValue(FACING, Direction.NORTH)
+            .setValue(HEAT_LEVEL, 0));
+    }
+
+    @Override
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
+                                            Player player, BlockHitResult hit) {
+        if (!level.isClientSide) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be instanceof ForgeBlockEntity forge) {
+                player.openMenu(forge, pos);
+            }
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new ForgeBlockEntity(pos, state);
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(LIT, FACING, HEAT_LEVEL);
+    }
+}
+```
+
+**Complete Workshop Block List:**
+
+| Block ID | Introduced Age | Key Block State Properties | Key Function |
+|---|---|---|---|
+| `forge` | Stone | `lit`, `facing`, `heat_level (0-4)` | Metal smelting + hot-working |
+| `carpentry_bench` | Stone | `facing` | Wood processing + furniture |
+| `loom` | Stone | `facing` | Textiles: cloth, rope, nets |
+| `alchemy_lab` | Copper | `facing`, `active` | Chemistry, medicine, transmutation |
+| `kitchen` | Stone | `facing`, `lit` | Food preparation + cooking |
+| `tannery` | Stone | `facing` | Leather working + preservation |
+| `pottery_wheel` | Stone | `facing`, `active` | Clay forming + ceramics |
+| `bloomery` | Copper | `lit`, `facing` | Primitive iron smelting |
+| `crucible` | Iron | `lit`, `facing`, `heat_level (0-4)` | High-temp alloy mixing |
+| `anvil_block` | Stone | `facing`, `damage (0-2)` | Hammering, shaping, repairs |
+| `grindstone_block` | Stone | `facing`, `face` | Ore crushing + tool sharpening |
+| `workbench` | Stone | `facing` | General crafting (replaces vanilla table) |
+
+---
+
+## 6. Item Registry — All Items
+
+### 6.1 Raw Material Items per Metal
+
+For each of the 21 processable metals, the following items are registered automatically:
+
+```java
+// ItemRegistry pattern in DataRegistries
+for (String metal : PROCESSABLE_METALS) {
+    register("raw_" + metal,          RawOreItem::new);     // dropped by ore block
+    register("raw_" + metal + "_chunk", ChunkItem::new);    // large vein bonus drop
+    register(metal + "_dust",          DustItem::new);      // from grindstone
+    register(metal + "_ingot",         IngotItem::new);     // from furnace/crucible
+    register(metal + "_nugget",        NuggetItem::new);    // 1/9 ingot
+    register(metal + "_plate",         PlateItem::new);     // from anvil hammering
+    register(metal + "_rod",           RodItem::new);       // cast rod (industrial)
+    register(metal + "_gear",          GearItem::new);      // machined gear (industrial)
+    register(metal + "_wire",          WireItem::new);      // drawn wire (modern)
+    register(metal + "_block",         MetalBlock::new);    // 9-ingot storage block
+}
+```
+
+**21 Processable Metals:** iron, copper, tin, silver, lead, zinc, nickel, gold, platinum, tungsten, titanium, aluminum, manganese, chromium, cobalt, uranium, steel, bronze, brass, stainless_steel, titanium_steel
+
+**Gem items (no intermediate steps):**
+`diamond_dust`, `emerald_dust`, `ruby`, `ruby_dust`, `sapphire`, `sapphire_dust`
+
+### 6.2 Fuel Items
+
+| Item ID | Fuel Type | Heat Value (kJ) | Burn Duration (ticks/unit) | Pollution Output | Age Unlock |
+|---|---|---|---|---|---|
+| `lignite_coal` | SOLID | 10,000 | 800 | HIGH | Stone |
+| `coal_chunk` | SOLID | 14,000 | 1200 | HIGH | Stone |
+| `charcoal_block` | SOLID | 16,000 | 1600 | MEDIUM | Stone |
+| `peat_brick` | SOLID | 8,000 | 600 | HIGH | Stone |
+| `dried_dung` | SOLID | 5,000 | 400 | VERY_HIGH | Stone |
+| `wood_log` | SOLID | varies | 300 | MEDIUM | Stone |
+| `coke_coal` | SOLID | 28,000 | 2400 | LOW | Iron |
+| `oil_bucket` | LIQUID | 42,000 | 3600 | HIGH | Industrial |
+| `diesel_bucket` | LIQUID | 45,000 | 4000 | HIGH | Industrial |
+| `natural_gas_canister` | GAS | 38,000 | 3200 | MEDIUM | Industrial |
+| `hydrogen_tank` | GAS | 120,000 | 10000 | NONE | Modern |
+| `uranium_fuel_rod` | NUCLEAR | 10,000,000 | 1,000,000 | RADIATION | Modern |
+| `thorium_fuel_rod` | NUCLEAR | 8,000,000 | 900,000 | RADIATION | Modern |
+| `solar_panel_charge` | ELECTRIC | ∞ (passive) | — | NONE | Modern |
+
+### 6.3 Workshop Tool Items
+
+| Item ID | Used In | Durability | Material |
+|---|---|---|---|
+| `hammer_stone` | Forge, Anvil | 64 | Stone |
+| `hammer_copper` | Forge, Anvil | 128 | Copper |
+| `hammer_iron` | Forge, Anvil | 512 | Iron |
+| `hammer_steel` | Forge, Anvil | 1024 | Steel |
+| `tongs_iron` | Forge, Crucible | 256 | Iron |
+| `tongs_steel` | Forge, Crucible | 512 | Steel |
+| `chisel_stone` | Carpentry, Carved | 64 | Stone |
+| `chisel_iron` | Carpentry, Carved | 256 | Iron |
+| `chisel_steel` | Carpentry, Carved | 512 | Steel |
+| `saw_iron` | Carpentry | 256 | Iron |
+| `saw_steel` | Carpentry | 512 | Steel |
+| `needle_copper` | Loom | 64 | Copper |
+| `needle_iron` | Loom | 128 | Iron |
+| `pottery_tool` | Pottery Wheel | 64 | Wood/Stone |
+| `mortar_pestle` | Alchemy, Kitchen | 128 | Stone |
+| `alembic` | Alchemy Lab | 64 | Glass/Copper |
+| `bellows` | Forge, Bloomery | 128 | Leather |
+| `crucible_tongs` | Crucible | 256 | Iron |
+| `draw_plate` | Forge | 256 | Steel |  
+| `rolling_mill` | Forge (block) | — | Steel |
+
+---
+
+## 7. Fuel System
+
+### 7.1 FuelDefinition
+
+**File:** `data/FuelDefinition.java`
+
+```java
+package com.horizonpack.horizondata.data;
+
+import com.horizonpack.horizoncore.data.HorizonAge;
+
+public record FuelDefinition(
+    String fuelId,
+    FuelType type,
+    int heatValueKJ,            // total energy released
+    int burnDurationTicks,      // how long it burns in a furnace
+    int maxTemperatureCelsius,  // peak heat achievable — gates recipes
+    PollutionLevel pollution,   // affects settlement air quality
+    HorizonAge ageUnlock,       // earliest age this fuel is usable
+    boolean requiresStorage,    // true for oil/gas (needs tank block)
+    boolean isExplosive         // true for gas fuels
+) {
+    public enum FuelType { SOLID, LIQUID, GAS, ELECTRIC, NUCLEAR }
+
+    public enum PollutionLevel {
+        NONE(0), LOW(10), MEDIUM(25), HIGH(50), VERY_HIGH(75), RADIATION(100);
+        public final int value;
+        PollutionLevel(int v) { this.value = v; }
+    }
+
+    // Max temperatures per fuel type:
+    // dried_dung      → 400°C   (pottery, lime burning only)
+    // wood_log        → 600°C   (copper smelting)
+    // coal_chunk      → 900°C   (iron smelting fails; needs coke or blast)
+    // coke_coal       → 1200°C  (iron smelting OK)
+    // coke + blast    → 1600°C  (steel)
+    // oil_burner      → 1800°C  (titanium, stainless steel)
+    // electric_arc    → 3500°C+ (tungsten, platinum, reactor-grade)
+}
+```
+
+### 7.2 FuelRegistry
+
+**File:** `systems/FuelRegistry.java`
+
+```java
+package com.horizonpack.horizondata.systems;
+
+import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.common.extensions.IItemExtension;
+import java.util.HashMap;
+import java.util.Map;
+
+public class FuelRegistry {
+
+    private static final Map<String, FuelDefinition> FUEL_MAP = new HashMap<>();
+
+    public static void buildFuelMap() {
+        // Registered at startup from JSON data files in data/horizondata/fuels/
+        // Each file: { "fuel_id": "coke_coal", "type": "SOLID", "heat_kj": 28000, ... }
+    }
+
+    /** Returns the FuelDefinition for the given ItemStack, or null if not a fuel. */
+    public static FuelDefinition getFuel(ItemStack stack) {
+        return FUEL_MAP.get(stack.getItem().builtInRegistryHolder().key().location().getPath());
+    }
+
+    /** Returns the max temperature achievable by this item as fuel. */
+    public static int getMaxTemperature(ItemStack stack) {
+        FuelDefinition def = getFuel(stack);
+        return def != null ? def.maxTemperatureCelsius() : 0;
+    }
+
+    /** Integrates with NeoForge's IItemExtension.getBurnTime for vanilla furnace compat */
+    public static int getVanillaBurnTime(ItemStack stack) {
+        FuelDefinition def = getFuel(stack);
+        return def != null ? def.burnDurationTicks() : -1;
+    }
+}
+```
+
+---
+
+## 8. Crafting & Workshop System
+
+### 8.1 Workshop Recipe System
+
+Each of the 12 workshops has its own `IRecipeType<T>` and `RecipeSerializer<T>`. This allows data packs to define recipes for specific stations and prevents cross-station recipe accidents.
+
+**Recipe Types Registration:**
+```java
+// In DataRegistries.java
+public static final Map<WorkshopType, RegistryObject<RecipeType<?>>> WORKSHOP_RECIPE_TYPES
+    = new EnumMap<>(WorkshopType.class);
+
+static {
+    for (WorkshopType type : WorkshopType.values()) {
+        WORKSHOP_RECIPE_TYPES.put(type,
+            RECIPE_TYPES.register(type.id() + "_recipe",
+                () -> new RecipeType<>() {
+                    @Override public String toString() { return HorizonData.MODID + ":" + type.id(); }
+                }));
+    }
+}
+```
+
+### 8.2 ForgeRecipe — Full Implementation
+
+**File:** `recipes/ForgeRecipe.java`
+
+```java
+package com.horizonpack.horizondata.recipes;
+
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.*;
+import net.minecraft.world.level.Level;
+
+public class ForgeRecipe implements Recipe<ForgeRecipeInput> {
+
+    private final Ingredient fuel;          // acceptable fuel ingredient
+    private final Ingredient input;         // ore / metal item to process
+    private final ItemStack result;         // output stack
+    private final int minHeatCelsius;       // minimum forge temperature needed
+    private final int processingTicks;      // how many ticks the recipe runs
+    private final Ingredient toolRequired;  // e.g. tongs, hammer — null if none
+    private final boolean requiresAnvil;    // true for shaping recipes (plate, rod)
+    private final String requiredAge;       // "iron_age" etc.; checked via HorizonCore cap
+
+    public static final MapCodec<ForgeRecipe> CODEC = RecordCodecBuilder.mapCodec(inst -> inst.group(
+        Ingredient.CODEC.fieldOf("fuel").forGetter(r -> r.fuel),
+        Ingredient.CODEC.fieldOf("input").forGetter(r -> r.input),
+        ItemStack.CODEC.fieldOf("result").forGetter(r -> r.result),
+        net.minecraft.util.ExtraCodecs.NON_NEGATIVE_INT.fieldOf("min_heat_celsius").forGetter(r -> r.minHeatCelsius),
+        net.minecraft.util.ExtraCodecs.NON_NEGATIVE_INT.fieldOf("processing_ticks").forGetter(r -> r.processingTicks),
+        Ingredient.CODEC.optionalFieldOf("tool_required", Ingredient.EMPTY).forGetter(r -> r.toolRequired),
+        net.minecraft.util.ExtraCodecs.strictOptionalField(net.minecraft.util.ExtraCodecs.LITERAL_STRING_CODEC, "required_age", "").forGetter(r -> r.requiredAge)
+    ).apply(inst, (fuel, input, result, heat, ticks, tool, age) ->
+        new ForgeRecipe(fuel, input, result, heat, ticks, tool, false, age)));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, ForgeRecipe> STREAM_CODEC = /* ... */;
+
+    @Override
+    public boolean matches(ForgeRecipeInput input, Level level) {
+        return this.input.test(input.getInputItem())
+            && this.fuel.test(input.getFuelItem())
+            && (this.toolRequired == Ingredient.EMPTY || this.toolRequired.test(input.getToolItem()))
+            && input.getCurrentHeat() >= this.minHeatCelsius;
+    }
+
+    @Override
+    public ItemStack assemble(ForgeRecipeInput input, HolderLookup.Provider registries) {
+        return result.copy();
+    }
+
+    @Override
+    public RecipeSerializer<ForgeRecipe> getSerializer() {
+        return DataRegistries.FORGE_RECIPE_SERIALIZER.get();
+    }
+
+    @Override
+    public RecipeType<ForgeRecipe> getType() {
+        return (RecipeType<ForgeRecipe>) DataRegistries.WORKSHOP_RECIPE_TYPES
+            .get(WorkshopType.FORGE).get();
+    }
+}
+```
+
+### 8.3 Workshop Type Enum
+
+**File:** `data/WorkshopType.java`
+
+```java
+package com.horizonpack.horizondata.data;
+
+public enum WorkshopType {
+    FORGE           ("forge",           "forge_recipe"),
+    CARPENTRY       ("carpentry_bench", "carpentry_recipe"),
+    LOOM            ("loom",            "loom_recipe"),
+    ALCHEMY         ("alchemy_lab",     "alchemy_recipe"),
+    KITCHEN         ("kitchen",         "kitchen_recipe"),
+    TANNERY         ("tannery",         "tannery_recipe"),
+    POTTERY         ("pottery_wheel",   "pottery_recipe"),
+    BLOOMERY        ("bloomery",        "bloomery_recipe"),
+    CRUCIBLE        ("crucible",        "crucible_recipe"),
+    ANVIL           ("anvil_block",     "anvil_recipe"),
+    GRINDSTONE      ("grindstone_block","grindstone_recipe"),
+    WORKBENCH       ("workbench",       "workbench_recipe");
+
+    private final String blockId;
+    private final String recipeTypeId;
+    WorkshopType(String b, String r) { this.blockId = b; this.recipeTypeId = r; }
+    public String id()            { return blockId; }
+    public String recipeType()    { return recipeTypeId; }
+}
+```
+
+### 8.4 Multi-Step Sword Example
+
+To craft an iron sword via the workshop system requires these sequential recipes:
+
+```
+1. [grindstone_recipe] iron_ore → iron_dust (x2)
+2. [bloomery_recipe]   iron_dust + charcoal → pig_iron_ingot (requires 1200°C)
+3. [forge_recipe]      pig_iron_ingot + coke_coal → iron_ingot (requires 1400°C)
+4. [forge_recipe]      iron_ingot → iron_billet (hammer + tongs required)
+5. [anvil_recipe]      iron_billet → iron_blade (hammer required, 3 hits)
+6. [grindstone_recipe] iron_blade → sharpened_iron_blade
+7. [workbench_recipe]  sharpened_iron_blade + stick → iron_sword
+```
+
+This multi-step process is tracked by the player's `IHorizonPlayerData.getCraftingChainProgress()` capability field from HorizonCore.
+
+---
+
+## 9. Ore Processing Pipeline
+
+### 9.1 ProcessingStage Enum
+
+```java
+package com.horizonpack.horizondata.data;
+
+public enum ProcessingStage {
+    RAW         (0, "raw_%s"),           // dropped by ore block
+    CRUSHED     (1, "crushed_%s"),       // grindstone stage 1
+    WASHED      (2, "washed_%s"),        // water trough + stirring
+    CONCENTRATED(3, "concentrated_%s"), // separation; optional for some ores
+    SMELTED     (4, "%s_ingot"),         // basic furnace / bloomery / forge output
+    REFINED     (5, "refined_%s_ingot"), // second smelt in crucible; higher purity
+    ALLOYED     (6, "%s_alloy_ingot");   // crucible mix of 2+ refined metals
+
+    public final int tier;
+    public final String itemPattern;   // String.format with metal name
+
+    ProcessingStage(int tier, String pattern) {
+        this.tier = tier;
+        this.itemPattern = pattern;
+    }
+}
+```
+
+### 9.2 Yield Table per Stage
+
+| Stage | Tool/Station | Yield | Time (ticks) | Notes |
+|---|---|---|---|---|
+| RAW | Mining | 1 raw + 0–2 bonus | — | Fortune enchant applies |
+| CRUSHED | Grindstone | 2 dust per raw | 100 | Hammer required |
+| WASHED | Water Trough | 1.5× yield modifier | 200 | Requires flowing water |
+| CONCENTRATED | Sluice/Lab | +25% purity | 400 | Optional; skippable |
+| SMELTED | Bloomery/Forge | 1 ingot per 2 dust | 600 | Heat gated |
+| REFINED | Crucible | 1.1 ingots per ingot | 1200 | Removes slag |
+| ALLOYED | Crucible | 1 alloy per formula | 1600 | Multi-input |
+
+### 9.3 AlloyRegistry
+
+**File:** `systems/AlloyRegistry.java`
+
+```java
+package com.horizonpack.horizondata.systems;
+
+public class AlloyRegistry {
+
+    public record AlloyFormula(
+        String outputMetal,
+        Map<String, Double> inputs,  // metal_id → percentage by weight
+        int minTemperatureCelsius,
+        int processingTicks,
+        double outputMultiplier      // how many ingots output per ingot-equivalent input
+    ) {}
+
+    private static final List<AlloyFormula> ALLOYS = new ArrayList<>();
+
+    public static void buildAlloyMap() {
+        // Bronze: 88% copper + 12% tin → bronze
+        register("bronze",         Map.of("copper", 0.88, "tin", 0.12),         950, 1200, 1.0);
+        // Brass: 70% copper + 30% zinc → brass
+        register("brass",          Map.of("copper", 0.70, "zinc", 0.30),         900, 1000, 1.0);
+        // Steel: 99% iron + 1% carbon (coke dust) → steel
+        register("steel",          Map.of("iron", 0.99, "carbon_dust", 0.01),   1480, 1600, 0.95);
+        // Stainless: 72% iron + 18% chromium + 10% nickel → stainless
+        register("stainless_steel",Map.of("iron",0.72,"chromium",0.18,"nickel",0.10), 1400, 2000, 0.90);
+        // Electrum: 50% gold + 50% silver → electrum
+        register("electrum",       Map.of("gold", 0.50, "silver", 0.50),        1000, 1000, 1.0);
+        // Invar: 64% iron + 36% nickel → invar
+        register("invar",          Map.of("iron", 0.64, "nickel", 0.36),        1425, 1800, 0.95);
+        // Constantan: 55% copper + 45% nickel → constantan
+        register("constantan",     Map.of("copper",0.55,"nickel",0.45),         1220, 1600, 0.95);
+        // Titanium-Steel: 85% titanium + 15% steel → titanium_steel
+        register("titanium_steel", Map.of("titanium",0.85,"steel",0.15),        1550, 2400, 0.90);
+        // Nichrome: 80% nickel + 20% chromium → nichrome (heating wire)
+        register("nichrome",       Map.of("nickel",0.80,"chromium",0.20),       1400, 1800, 0.95);
+    }
+}
+```
+
+---
+
+## 10. Block Entities
+
+### 10.1 ForgeBlockEntity
+
+**File:** `blockentities/ForgeBlockEntity.java`
+
+```java
+package com.horizonpack.horizondata.blockentities;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class ForgeBlockEntity extends BlockEntity implements MenuProvider {
+
+    // Slots: 0=fuel, 1=input, 2=tool, 3=output
+    private final SimpleContainer inventory = new SimpleContainer(4);
+
+    private int currentHeat = 0;        // current temperature in °C
+    private int targetHeat = 0;         // temperature this fuel will reach
+    private int fuelBurnTicks = 0;      // ticks remaining on current fuel
+    private int processProgress = 0;    // ticks into current recipe
+    private int processTotal = 0;       // total ticks recipe requires
+    private RecipeHolder<ForgeRecipe> currentRecipe = null;
+
+    public static final int HEAT_RISE_RATE = 5;    // °C per tick while burning
+    public static final int HEAT_DROP_RATE = 2;    // °C per tick when not burning
+    public static final int MAX_HEAT = 3500;        // electric arc maximum
+
+    public ForgeBlockEntity(BlockPos pos, BlockState state) {
+        super(DataRegistries.FORGE_BLOCK_ENTITY.get(), pos, state);
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, ForgeBlockEntity be) {
+        boolean wasBurning = be.fuelBurnTicks > 0;
+
+        // 1. Manage fuel consumption
+        if (be.fuelBurnTicks <= 0 && be.currentRecipe != null) {
+            ItemStack fuelStack = be.inventory.getItem(0);
+            FuelDefinition fuel = FuelRegistry.getFuel(fuelStack);
+            if (fuel != null && fuelStack.getCount() > 0) {
+                be.fuelBurnTicks = fuel.burnDurationTicks();
+                be.targetHeat = fuel.maxTemperatureCelsius();
+                fuelStack.shrink(1);
+            }
+        }
+
+        // 2. Update heat
+        if (be.fuelBurnTicks > 0) {
+            be.fuelBurnTicks--;
+            if (be.currentHeat < be.targetHeat) {
+                be.currentHeat = Math.min(be.currentHeat + HEAT_RISE_RATE, be.targetHeat);
+            }
+        } else {
+            be.targetHeat = 0;
+            if (be.currentHeat > 0) {
+                be.currentHeat = Math.max(0, be.currentHeat - HEAT_DROP_RATE);
+            }
+        }
+
+        // 3. Update blockstate LIT and HEAT_LEVEL
+        boolean isLit = be.fuelBurnTicks > 0;
+        int heatLevel = be.currentHeat >= 1400 ? 4 : be.currentHeat >= 900 ? 3 :
+                        be.currentHeat >= 600 ? 2 : be.currentHeat >= 200 ? 1 : 0;
+        BlockState newState = state.setValue(ForgeBlock.LIT, isLit)
+                                   .setValue(ForgeBlock.HEAT_LEVEL, heatLevel);
+        if (!newState.equals(state)) level.setBlock(pos, newState, 3);
+
+        // 4. Process recipe
+        if (be.currentRecipe != null) {
+            ForgeRecipeInput input = new ForgeRecipeInput(
+                be.inventory.getItem(1), be.inventory.getItem(0),
+                be.inventory.getItem(2), be.currentHeat);
+
+            if (be.currentRecipe.value().matches(input, level)) {
+                be.processProgress++;
+                if (be.processProgress >= be.processTotal) {
+                    // Output result
+                    ItemStack result = be.currentRecipe.value().assemble(input, level.registryAccess());
+                    be.inventory.setItem(3, result);
+                    be.inventory.getItem(1).shrink(1);
+                    be.processProgress = 0;
+                    // Fire event
+                    NeoForge.EVENT_BUS.post(new WorkshopCraftEvent(be, be.currentRecipe, result));
+                }
+            } else {
+                be.processProgress = 0; // heat dropped below threshold
+            }
+        }
+
+        // 5. Sync to clients
+        if (isLit != wasBurning) {
+            DataPacketHandler.sendToNearby(level, pos, new SyncWorkshopPacket(pos, be));
+        }
+    }
+
+    @Override
+    public void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putInt("heat", currentHeat);
+        tag.putInt("fuel_ticks", fuelBurnTicks);
+        tag.putInt("progress", processProgress);
+        tag.putInt("progress_total", processTotal);
+        ContainerHelper.saveAllItems(tag, inventory.getItems(), registries);
+    }
+
+    @Override
+    public void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        currentHeat    = tag.getInt("heat");
+        fuelBurnTicks  = tag.getInt("fuel_ticks");
+        processProgress = tag.getInt("progress");
+        processTotal   = tag.getInt("progress_total");
+        ContainerHelper.loadAllItems(tag, inventory.getItems(), registries);
+    }
+
+    // MenuProvider
+    @Override
+    public AbstractContainerMenu createMenu(int containerId, Inventory playerInv, Player player) {
+        return new ForgeMenu(containerId, playerInv, this);
+    }
+    @Override
+    public Component getDisplayName() { return Component.translatable("block.horizondata.forge"); }
+}
+```
+
+**Other BlockEntities** follow the same pattern with their slot counts, progress tracking, and applicable recipe types. Key differences:
+
+| BlockEntity | Slots | Special State | Extra Fields |
+|---|---|---|---|
+| `CarpentryBenchBlockEntity` | 1×tool + 4×input + 1×output | — | `toolDurabilityUsed` |
+| `LoomBlockEntity` | 1×material + 1×dye + 1×output | — | `patternData (CompoundTag)` |
+| `AlchemyLabBlockEntity` | 3×input + 1×catalyst + 1×output | `active` | `reactionProgress`, `failChance` |
+| `KitchenBlockEntity` | 4×ingredient + 1×fuel + 1×output | `lit` | `heatLevel`, `cookQuality` |
+| `TanneryBlockEntity` | 1×hide + 1×tannin + 1×output | — | `soakProgress` |
+| `PotteryWheelBlockEntity` | 1×clay + 1×tool + 1×output | `active`, `spin_speed` | `shapeData` |
+| `BloomeryBlockEntity` | 1×ore + 1×fuel + 1×output | `lit`, `heat_level` | `slagAccumulated` |
+| `CrucibleBlockEntity` | 4×metal + 1×fuel + 1×output | `lit`, `heat_level` | `mixRatios (float[4])` |
+| `AnvilBlockEntity` | 1×input + 1×hammer + 1×output | `damage` | `hitsRemaining` |
+| `GrindstoneBlockEntity` | 1×input + 1×output | — | `grindProgress` |
+| `WorkbenchBlockEntity` | 9×grid + 1×output | — | standard crafting matrix |
+
+---
+
+## 11. Structural Integrity System
+
+### 11.1 Overview
+
+Every `HorizonBlock` derivative (stone, wood, composite, metal) carries a `structuralLoad` value. When a block is placed, `StructuralIntegrity.checkSupport()` runs a flood-fill from that block downward, verifying that the accumulated load is within the support capacity of load-bearing columns and floor blocks.
+
+### 11.2 Load Values
+
+| Block Category | Load Units |
+|---|---|
+| Air | 0 |
+| Wood planks / slab | 1 |
+| Wood beam / log | 2 |
+| Stone (light: sandstone, pumice) | 4 |
+| Stone (standard: limestone, granite) | 6 |
+| Stone (heavy: basalt, quartzite) | 8 |
+| Metal block (iron, steel) | 10 |
+| Composite (concrete) | 7 |
+| Reinforced concrete | 12 |
+| Filled chest / barrel | +3 |
+| Entity standing on block | +1 per entity |
+
+### 11.3 Support Capacity
+
+| Support Element | Max Load Units | Notes |
+|---|---|---|
+| Wood pillar (oak) | 30 | Buckles if load > 30 |
+| Stone pillar (limestone) | 80 | |
+| Stone pillar (granite) | 150 | |
+| Iron beam | 200 | |
+| Steel I-beam | 500 | |
+| Arch (distributes load) | ×2 capacity of material | Flying buttress effect |
+| Foundation block (stone) | Unlimited | Must connect to bedrock chain |
+
+### 11.4 Collapse Mechanic
+
+```java
+// StructuralIntegrity.java
+public class StructuralIntegrity {
+
+    /** Called on BlockPlaceEvent and via periodic server tick (every 200 ticks). */
+    public static void checkSupport(Level level, BlockPos placedPos) {
+        int totalLoad = calculateColumnLoad(level, placedPos);
+        int capacity = getSupportCapacity(level, placedPos);
+
+        if (totalLoad > capacity) {
+            // Trigger collapse event
+            StructureCollapseEvent event = new StructureCollapseEvent(level, placedPos, totalLoad, capacity);
+            NeoForge.EVENT_BUS.post(event);
+            if (!event.isCanceled()) {
+                performCollapse(level, placedPos);
+            }
+        }
+    }
+
+    private static void performCollapse(Level level, BlockPos origin) {
+        // BFS from origin upward — convert load-bearing blocks to falling block entities
+        Queue<BlockPos> queue = new ArrayDeque<>();
+        queue.add(origin);
+        Set<BlockPos> visited = new HashSet<>();
+        while (!queue.isEmpty()) {
+            BlockPos pos = queue.poll();
+            if (visited.contains(pos) || !isLoadBearing(level.getBlockState(pos))) continue;
+            visited.add(pos);
+            // Convert to falling block
+            FallingBlockEntity fb = FallingBlockEntity.fall(level, pos, level.getBlockState(pos));
+            fb.dropItem = true; // drops as item when lands
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            // Propagate to blocks above
+            queue.add(pos.above());
+        }
+        level.playSound(null, origin, SoundEvents.STRUCTURAL_INTEGRITY_COLLAPSE,
+            SoundSource.BLOCKS, 1.5f, 0.8f);
+    }
+}
+```
+
+---
+
+## 12. Material Properties System
+
+### 12.1 WeatheringSystem
+
+**File:** `systems/WeatheringSystem.java`
+
+Blocks that can weather (iron, copper, bronze, certain stone types) track a `weatherStage` from 0 to 4 stored in the block's NBT. Every `WEATHERING_TICK_INTERVAL` (default 24000 ticks = 1 in-game day) the system checks exposure to rain, humidity, and temperature.
+
+```java
+public class WeatheringSystem {
+
+    public static final int WEATHERING_TICK_INTERVAL = 24000;
+    public static final int MAX_WEATHER_STAGE = 4;
+
+    // Weather stage descriptions per material:
+    // IRON:   0=clean, 1=tarnish, 2=light_rust, 3=heavy_rust, 4=corroded
+    // COPPER: 0=clean, 1=tarnish, 2=patina_start, 3=patina, 4=verdigris
+    // STONE:  0=clean, 1=mossy_start, 2=mossy, 3=weathered, 4=eroded
+    // BRONZE: 0=clean, 1=tarnish, 2=oxidized, 3=heavily_oxidized, 4=patina
+
+    public static void tickWeathering(ServerLevel level, BlockPos pos, BlockState state) {
+        if (!(state.getBlock() instanceof WeatheringBlock wb)) return;
+        if (!shouldWeather(level, pos)) return;
+
+        CompoundTag nbt = getBlockNbt(level, pos);
+        int stage = nbt.getInt("weather_stage");
+        if (stage >= MAX_WEATHER_STAGE) return;
+
+        float weatherChance = calculateWeatherChance(level, pos);
+        if (level.random.nextFloat() < weatherChance) {
+            nbt.putInt("weather_stage", stage + 1);
+            setBlockNbt(level, pos, nbt);
+            // Trigger texture update via model data update
+            level.sendBlockUpdated(pos, state, state, 3);
+            NeoForge.EVENT_BUS.post(new MaterialWeatheredEvent(level, pos, stage, stage + 1));
+        }
+    }
+
+    private static float calculateWeatherChance(ServerLevel level, BlockPos pos) {
+        float base = 0.01f;                              // 1% per day base chance
+        if (level.isRaining() && level.canSeeSky(pos)) base *= 3f;    // 3% in rain
+        if (level.getBiome(pos).value().getBaseTemperature() > 0.7f) base *= 1.5f; // humid
+        if (level.getBiome(pos).value().getBaseTemperature() < 0.0f) base *= 0.5f; // frozen
+        return base;
+    }
+}
+```
+
+### 12.2 Visual Weathering — Model Data Override
+
+Weathering stages are rendered via `IClientItemExtensions.getModelData()` which injects a `ModelProperty<Integer>` (`WEATHER_STAGE_PROPERTY`) into the block's BakedModel lookup, selecting from 5 pre-baked model variants per material.
+
+---
+
+## 13. Event Hooks
+
+### 13.1 Custom Events
+
+**File:** `events/custom/OreMinedEvent.java`
+```java
+public class OreMinedEvent extends Event {
+    private final Player player;
+    private final BlockPos pos;
+    private final OreDefinition oreDef;
+    private final ProcessingStage dropStage; // usually RAW
+
+    // Getters + constructor
+    // Cancellable — cancel to prevent drop (for Fortune / Silk Touch overrides)
+}
+```
+
+**File:** `events/custom/WorkshopCraftEvent.java`
+```java
+public class WorkshopCraftEvent extends Event {
+    private final BlockEntity workshop;
+    private final RecipeHolder<?> recipe;
+    private ItemStack result;         // mutable — other mods can modify output
+    private final WorkshopType workshopType;
+}
+```
+
+**File:** `events/custom/AlloyCompletedEvent.java`
+```java
+public class AlloyCompletedEvent extends Event {
+    private final BlockEntity crucible;
+    private final AlloyRegistry.AlloyFormula formula;
+    private ItemStack result;         // mutable
+    private final int heatUsed;       // actual temperature at completion
+}
+```
+
+**File:** `events/custom/StructureCollapseEvent.java`
+```java
+@Cancelable
+public class StructureCollapseEvent extends Event {
+    private final Level level;
+    private final BlockPos originPos;
+    private final int totalLoad;
+    private final int capacity;
+    // Cancel to prevent collapse (e.g. HorizonMilitary reinforced walls)
+}
+```
+
+**File:** `events/custom/MaterialWeatheredEvent.java`
+```java
+public class MaterialWeatheredEvent extends Event {
+    private final Level level;
+    private final BlockPos pos;
+    private final int oldStage;
+    private final int newStage;
+}
+```
+
+### 13.2 Vanilla Event Hooks in DataEventHandlers
+
+```java
+@EventBusSubscriber(modid = HorizonData.MODID, bus = EventBusSubscriber.Bus.GAME)
+public class DataEventHandlers {
+
+    @SubscribeEvent
+    public static void onFuelBurn(FurnaceFuelBurnTimeEvent event) {
+        int burnTime = FuelRegistry.getVanillaBurnTime(event.getItemStack());
+        if (burnTime > 0) event.setBurnTime(burnTime);
+    }
+
+    @SubscribeEvent
+    public static void onBlockBreak(BlockBreakEvent event) {
+        Block block = event.getState().getBlock();
+        if (block instanceof HorizonOreBlock oreBlock) {
+            OreDefinition def = oreBlock.getOreDef();
+            OreMinedEvent oreEvent = new OreMinedEvent(
+                event.getPlayer(), event.getPos(), def, ProcessingStage.RAW);
+            NeoForge.EVENT_BUS.post(oreEvent);
+            if (oreEvent.isCanceled()) event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onServerTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        if (level.getGameTime() % WeatheringSystem.WEATHERING_TICK_INTERVAL == 0) {
+            // Iterate all loaded chunks and tick weathering on exposed blocks
+            WeatheringSystem.tickAllLoadedChunks(level);
+        }
+        if (level.getGameTime() % StructuralIntegrity.CHECK_INTERVAL == 0) {
+            StructuralIntegrity.periodicCheck(level);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
+        if (DataConfig.COMMON.enableStructuralIntegrity.get()) {
+            StructuralIntegrity.checkSupport(event.getLevel(), event.getPos());
+        }
+    }
+}
+```
+
+---
+
+## 14. Network Packets
+
+### 14.1 SyncWorkshopPacket
+
+**File:** `network/packets/SyncWorkshopPacket.java`
+
+```java
+public record SyncWorkshopPacket(
+    BlockPos pos,
+    int heat,
+    int fuelTicks,
+    int progress,
+    int progressTotal,
+    boolean lit
+) implements CustomPacketPayload {
+
+    public static final Type<SyncWorkshopPacket> TYPE =
+        new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonData.MODID, "sync_workshop"));
+
+    public static final StreamCodec<FriendlyByteBuf, SyncWorkshopPacket> STREAM_CODEC =
+        StreamCodec.composite(
+            BlockPos.STREAM_CODEC, SyncWorkshopPacket::pos,
+            ByteBufCodecs.INT,     SyncWorkshopPacket::heat,
+            ByteBufCodecs.INT,     SyncWorkshopPacket::fuelTicks,
+            ByteBufCodecs.INT,     SyncWorkshopPacket::progress,
+            ByteBufCodecs.INT,     SyncWorkshopPacket::progressTotal,
+            ByteBufCodecs.BOOL,    SyncWorkshopPacket::lit,
+            SyncWorkshopPacket::new);
+
+    @Override public Type<SyncWorkshopPacket> type() { return TYPE; }
+}
+```
+
+### 14.2 WorkshopProgressPacket
+
+Lightweight S→C packet sent every 4 ticks during active processing to drive the client GUI progress bar.
+
+```java
+public record WorkshopProgressPacket(BlockPos pos, int progress, int total)
+    implements CustomPacketPayload { /* ... */ }
+```
+
+### 14.3 Packet Registration
+
+```java
+@EventBusSubscriber(modid = HorizonData.MODID, bus = EventBusSubscriber.Bus.MOD)
+public class DataPacketHandler {
+    @SubscribeEvent
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonData.MODID).versioned("1.0.0");
+
+        registrar.playToClient(SyncWorkshopPacket.TYPE, SyncWorkshopPacket.STREAM_CODEC,
+            (packet, ctx) -> {
+                if (Minecraft.getInstance().level == null) return;
+                BlockEntity be = Minecraft.getInstance().level.getBlockEntity(packet.pos());
+                if (be instanceof ForgeBlockEntity forge) {
+                    forge.setHeat(packet.heat());
+                    forge.setProgress(packet.progress(), packet.progressTotal());
+                }
+            });
+
+        registrar.playToServer(OpenWorkshopPacket.TYPE, OpenWorkshopPacket.STREAM_CODEC,
+            (packet, ctx) -> {
+                ctx.player().openMenu(
+                    (MenuProvider) ctx.player().level().getBlockEntity(packet.pos()), packet.pos());
+            });
+    }
+}
+```
+
+---
+
+## 15. Configuration
+
+**File:** `core/DataConfig.java`
+
+```java
+package com.horizonpack.horizondata.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class DataConfig {
+
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final DataConfig COMMON;
+
+    static {
+        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
+        COMMON = new DataConfig(builder);
+        COMMON_SPEC = builder.build();
+    }
+
+    // ── Ore Generation ────────────────────────────────────────────────────────
+    public final ModConfigSpec.BooleanValue enableCustomOres;
+    public final ModConfigSpec.DoubleValue oreFrequencyMultiplier;
+    public final ModConfigSpec.BooleanValue enableOilAndGas;
+    public final ModConfigSpec.BooleanValue enableRareEarths;
+
+    // ── Fuel System ──────────────────────────────────────────────────────────
+    public final ModConfigSpec.BooleanValue enableFuelHeatGating;
+    public final ModConfigSpec.IntValue maxFurnaceHeat;
+    public final ModConfigSpec.BooleanValue enablePollutionSystem;
+
+    // ── Structural Integrity ─────────────────────────────────────────────────
+    public final ModConfigSpec.BooleanValue enableStructuralIntegrity;
+    public final ModConfigSpec.IntValue collapseCheckInterval;
+    public final ModConfigSpec.DoubleValue loadMultiplier;
+
+    // ── Weathering ───────────────────────────────────────────────────────────
+    public final ModConfigSpec.BooleanValue enableWeathering;
+    public final ModConfigSpec.IntValue weatheringTickInterval;
+    public final ModConfigSpec.BooleanValue allowWeatheringReversal;
+
+    // ── Workshop System ──────────────────────────────────────────────────────
+    public final ModConfigSpec.BooleanValue requireWorkshopForMetal;
+    public final ModConfigSpec.BooleanValue enableMultiStepCrafting;
+    public final ModConfigSpec.IntValue workshopProcessingSpeedMultiplier;
+
+    // ── Block Shapes ─────────────────────────────────────────────────────────
+    public final ModConfigSpec.BooleanValue enableSlopeBlocks;
+    public final ModConfigSpec.BooleanValue enableArchBlocks;
+    public final ModConfigSpec.BooleanValue enablePillarBlocks;
+
+    private DataConfig(ModConfigSpec.Builder builder) {
+        builder.push("ores");
+        enableCustomOres = builder
+            .comment("Enable HorizonData ore generation (disable if using another ore mod)")
+            .define("enable_custom_ores", true);
+        oreFrequencyMultiplier = builder
+            .comment("Multiplier for ore vein frequency. 1.0 = default, 0.5 = half, 2.0 = double")
+            .defineInRange("ore_frequency_multiplier", 1.0, 0.1, 5.0);
+        enableOilAndGas = builder
+            .comment("Enable oil and natural gas deposit generation (Industrial Age fuels)")
+            .define("enable_oil_and_gas", true);
+        enableRareEarths = builder
+            .comment("Enable rare earth element deposits (required for Modern Age electronics)")
+            .define("enable_rare_earths", true);
+        builder.pop();
+
+        builder.push("fuels");
+        enableFuelHeatGating = builder
+            .comment("If true, recipes requiring high temperatures only work in appropriate furnaces")
+            .define("enable_heat_gating", true);
+        maxFurnaceHeat = builder
+            .comment("Maximum achievable temperature (°C) in the forge/crucible")
+            .defineInRange("max_furnace_heat", 3500, 1000, 10000);
+        enablePollutionSystem = builder
+            .comment("If true, fuel pollution affects air quality in HorizonSociety settlements")
+            .define("enable_pollution", true);
+        builder.pop();
+
+        builder.push("structural_integrity");
+        enableStructuralIntegrity = builder
+            .comment("If true, buildings can collapse if load-bearing blocks are removed")
+            .define("enable_structural_integrity", true);
+        collapseCheckInterval = builder
+            .comment("Server ticks between integrity checks (default 200 = ~10 seconds)")
+            .defineInRange("collapse_check_interval", 200, 20, 12000);
+        loadMultiplier = builder
+            .comment("Multiplier on all block load values. Increase to make collapses less likely")
+            .defineInRange("load_multiplier", 1.0, 0.1, 10.0);
+        builder.pop();
+
+        builder.push("weathering");
+        enableWeathering = builder
+            .comment("If true, iron rusts, copper patinas, stone gets mossy over time")
+            .define("enable_weathering", true);
+        weatheringTickInterval = builder
+            .comment("Ticks between weathering checks per block (default 24000 = 1 day)")
+            .defineInRange("weathering_tick_interval", 24000, 100, 1000000);
+        allowWeatheringReversal = builder
+            .comment("If true, players can clean / restore blocks to previous weather stage")
+            .define("allow_weathering_reversal", true);
+        builder.pop();
+
+        builder.push("workshops");
+        requireWorkshopForMetal = builder
+            .comment("If true, metal ingots require forge/bloomery; disabling allows vanilla furnace")
+            .define("require_workshop_for_metal", true);
+        enableMultiStepCrafting = builder
+            .comment("If true, advanced items require multiple sequential workshop steps")
+            .define("enable_multi_step_crafting", true);
+        workshopProcessingSpeedMultiplier = builder
+            .comment("Multiplier on all workshop processing speeds (100 = default, 200 = 2× faster)")
+            .defineInRange("workshop_speed_multiplier", 100, 10, 1000);
+        builder.pop();
+    }
+}
+```
+
+---
+
+## 16. Data Pack Integration
+
+### 16.1 Ore Placement JSONs
+
+Each ore also ships a `worldgen/configured_feature` and `worldgen/placed_feature` JSON.
+
+**Example:** `data/horizondata/worldgen/configured_feature/copper_ore.json`
+```json
+{
+  "type": "minecraft:ore",
+  "config": {
+    "size": 16,
+    "discard_chance_on_air_exposure": 0.0,
+    "targets": [
+      {
+        "target": { "type": "minecraft:tag", "tag": "minecraft:stone_ore_replaceables" },
+        "state": { "Name": "horizondata:copper_ore" }
+      },
+      {
+        "target": { "type": "minecraft:tag", "tag": "minecraft:deepslate_ore_replaceables" },
+        "state": { "Name": "horizondata:deepslate_copper_ore" }
+      }
+    ]
+  }
+}
+```
+
+**Example:** `data/horizondata/worldgen/placed_feature/copper_ore.json`
+```json
+{
+  "feature": "horizondata:copper_ore",
+  "placement": [
+    { "type": "minecraft:count", "count": 16 },
+    { "type": "minecraft:in_square" },
+    {
+      "type": "minecraft:height_range",
+      "height": {
+        "type": "minecraft:trapezoid",
+        "min_inclusive": { "above_bottom": 0 },
+        "max_inclusive": { "absolute": 96 }
+      }
+    },
+    { "type": "minecraft:biome" }
+  ]
+}
+```
+
+### 16.2 Biome Modifier JSONs
+
+Each ore that is biome-restricted ships a biome modifier in `data/horizondata/neoforge/biome_modifier/`:
+
+**Example:** `data/horizondata/neoforge/biome_modifier/copper_ore.json`
+```json
+{
+  "type": "neoforge:add_features",
+  "biomes": "#minecraft:is_overworld",
+  "features": "horizondata:copper_ore",
+  "step": "underground_ores"
+}
+```
+
+**Example:** `data/horizondata/neoforge/biome_modifier/rare_earth_ore.json`
+```json
+{
+  "type": "neoforge:add_features",
+  "biomes": "#horizondata:continental_d",
+  "features": "horizondata:rare_earth_ore",
+  "step": "underground_ores"
+}
+```
+
+### 16.3 Fuel Data JSONs
+
+Each fuel type ships a JSON in `data/horizondata/fuels/`:
+
+**Example:** `data/horizondata/fuels/coke_coal.json`
+```json
+{
+  "fuel_id": "coke_coal",
+  "type": "SOLID",
+  "heat_kj": 28000,
+  "burn_duration_ticks": 2400,
+  "max_temperature_celsius": 1200,
+  "pollution": "LOW",
+  "age_unlock": "iron_age",
+  "requires_storage": false,
+  "is_explosive": false
+}
+```
+
+### 16.4 Alloy Data JSONs
+
+Each alloy formula ships a JSON in `data/horizondata/alloys/`:
+
+**Example:** `data/horizondata/alloys/steel.json`
+```json
+{
+  "output_metal": "steel",
+  "inputs": {
+    "iron": 0.99,
+    "carbon_dust": 0.01
+  },
+  "min_temperature_celsius": 1480,
+  "processing_ticks": 1600,
+  "output_multiplier": 0.95
+}
+```
+
+---
+
+## 17. Blockstate & Model JSONs
+
+### 17.1 Forge Block
+
+**`assets/horizondata/blockstates/forge.json`**
+```json
+{
+  "variants": {
+    "facing=north,lit=false,heat_level=0": { "model": "horizondata:block/forge_cold",  "y": 0   },
+    "facing=east,lit=false,heat_level=0":  { "model": "horizondata:block/forge_cold",  "y": 90  },
+    "facing=south,lit=false,heat_level=0": { "model": "horizondata:block/forge_cold",  "y": 180 },
+    "facing=west,lit=false,heat_level=0":  { "model": "horizondata:block/forge_cold",  "y": 270 },
+    "facing=north,lit=true,heat_level=1":  { "model": "horizondata:block/forge_warm",  "y": 0   },
+    "facing=north,lit=true,heat_level=2":  { "model": "horizondata:block/forge_hot",   "y": 0   },
+    "facing=north,lit=true,heat_level=3":  { "model": "horizondata:block/forge_very_hot", "y": 0 },
+    "facing=north,lit=true,heat_level=4":  { "model": "horizondata:block/forge_max",   "y": 0   }
+  }
+}
+```
+
+**`assets/horizondata/models/block/forge_cold.json`**
+```json
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "top":    "horizondata:block/forge_top",
+    "front":  "horizondata:block/forge_front_cold",
+    "side":   "horizondata:block/forge_side"
+  }
+}
+```
+
+Heat level models (`forge_warm` through `forge_max`) reference increasingly bright emissive front textures. The `forge_max` model uses `emissive: true` to glow without light level dependency.
+
+### 17.2 Slope Block
+
+Slope blocks use a custom baked model. The blockstate JSON selects the correct rotation; the actual geometry is handled by `SlopeBlockRenderer` which generates the VoxelShape-matching geometry at runtime.
+
+**`assets/horizondata/blockstates/oak_slope_45.json`**
+```json
+{
+  "variants": {
+    "facing=north,half=bottom": { "model": "horizondata:block/slope_45", "y": 0   },
+    "facing=east,half=bottom":  { "model": "horizondata:block/slope_45", "y": 90  },
+    "facing=south,half=bottom": { "model": "horizondata:block/slope_45", "y": 180 },
+    "facing=west,half=bottom":  { "model": "horizondata:block/slope_45", "y": 270 },
+    "facing=north,half=top":    { "model": "horizondata:block/slope_45_inverted", "y": 0 },
+    "facing=east,half=top":     { "model": "horizondata:block/slope_45_inverted", "y": 90 }
+  }
+}
+```
+
+**`assets/horizondata/models/block/slope_45.json`**
+```json
+{
+  "parent": "horizondata:block/slope_base",
+  "textures": {
+    "all": "horizondata:block/oak_planks"
+  },
+  "elements": [
+    {
+      "from": [0, 0, 0],
+      "to":   [16, 8, 16],
+      "faces": {
+        "down":  { "texture": "#all", "cullface": "down" },
+        "north": { "texture": "#all" },
+        "east":  { "texture": "#all" },
+        "west":  { "texture": "#all" }
+      }
+    },
+    {
+      "from": [0, 8, 0],
+      "to":   [16, 16, 8],
+      "faces": {
+        "north": { "texture": "#all" },
+        "east":  { "texture": "#all" },
+        "west":  { "texture": "#all" },
+        "top":   { "texture": "#all" }
+      }
+    }
+  ]
+}
+```
+
+### 17.3 Ore Block
+
+**`assets/horizondata/blockstates/copper_ore.json`**
+```json
+{
+  "variants": {
+    "": { "model": "horizondata:block/copper_ore" }
+  }
+}
+```
+
+**`assets/horizondata/models/block/copper_ore.json`**
+```json
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "horizondata:block/copper_ore"
+  }
+}
+```
+
+**`assets/horizondata/models/item/copper_ore.json`**
+```json
+{
+  "parent": "horizondata:block/copper_ore"
+}
+```
+
+---
+
+## 18. Recipe JSONs
+
+### 18.1 Forge Recipe — Iron Billet
+
+**`data/horizondata/recipes/forge/iron_billet.json`**
+```json
+{
+  "type": "horizondata:forge_recipe",
+  "fuel": { "tag": "horizondata:forge_fuels" },
+  "input": { "item": "horizondata:iron_ingot" },
+  "tool": { "item": "horizondata:tongs_iron" },
+  "min_heat_celsius": 900,
+  "processing_ticks": 300,
+  "result": { "id": "horizondata:iron_billet", "count": 1 },
+  "required_age": "iron_age"
+}
+```
+
+### 18.2 Crucible Recipe — Bronze
+
+**`data/horizondata/recipes/crucible/bronze.json`**
+```json
+{
+  "type": "horizondata:crucible_recipe",
+  "inputs": [
+    { "item": "horizondata:copper_ingot", "count": 8 },
+    { "item": "horizondata:tin_ingot",    "count": 1 }
+  ],
+  "fuel": { "tag": "c:coals" },
+  "min_heat_celsius": 950,
+  "processing_ticks": 1200,
+  "result": { "id": "horizondata:bronze_ingot", "count": 8 },
+  "required_age": "copper_age"
+}
+```
+
+### 18.3 Bloomery Recipe — Pig Iron
+
+**`data/horizondata/recipes/bloomery/pig_iron.json`**
+```json
+{
+  "type": "horizondata:bloomery_recipe",
+  "input": { "tag": "horizondata:iron_dusts" },
+  "fuel": { "item": "horizondata:charcoal_block" },
+  "min_heat_celsius": 1200,
+  "processing_ticks": 800,
+  "byproduct": { "id": "horizondata:iron_slag", "count": 1 },
+  "result": { "id": "horizondata:pig_iron_ingot", "count": 1 },
+  "required_age": "iron_age"
+}
+```
+
+### 18.4 Grindstone Recipe — Iron Dust
+
+**`data/horizondata/recipes/grindstone/iron_dust.json`**
+```json
+{
+  "type": "horizondata:grindstone_recipe",
+  "input": { "item": "horizondata:raw_iron" },
+  "tool": { "tag": "horizondata:hammers" },
+  "processing_ticks": 100,
+  "result": { "id": "horizondata:iron_dust", "count": 2 }
+}
+```
+
+### 18.5 Carpentry Recipe — Oak Beam
+
+**`data/horizondata/recipes/carpentry/oak_beam.json`**
+```json
+{
+  "type": "horizondata:carpentry_recipe",
+  "input": { "item": "minecraft:oak_log" },
+  "tool": { "tag": "horizondata:saws" },
+  "processing_ticks": 80,
+  "result": { "id": "horizondata:oak_beam", "count": 2 }
+}
+```
+
+### 18.6 Workbench Recipe — Carpentry Bench
+
+**`data/horizondata/recipes/workbench/carpentry_bench.json`**
+```json
+{
+  "type": "horizondata:workbench_recipe",
+  "pattern": ["PPP", "SSS", "PPP"],
+  "key": {
+    "P": { "item": "minecraft:oak_planks" },
+    "S": { "item": "horizondata:raw_iron" }
+  },
+  "result": { "id": "horizondata:carpentry_bench", "count": 1 }
+}
+```
+
+---
+
+## 19. Loot Table JSONs
+
+### 19.1 Ore Loot Tables
+
+**`data/horizondata/loot_tables/blocks/copper_ore.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "bonus_rolls": 0,
+      "entries": [
+        {
+          "type": "minecraft:alternatives",
+          "children": [
+            {
+              "type": "minecraft:item",
+              "name": "horizondata:raw_copper",
+              "conditions": [{ "condition": "minecraft:match_tool",
+                "predicate": { "enchantments": [{ "enchantment": "minecraft:silk_touch", "levels": { "min": 1 } }] } }]
+            },
+            {
+              "type": "minecraft:item",
+              "name": "horizondata:raw_copper",
+              "functions": [
+                { "function": "minecraft:apply_bonus",
+                  "enchantment": "minecraft:fortune",
+                  "formula": "minecraft:ore_drops" },
+                { "function": "minecraft:explosion_decay" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 19.2 Workshop Block Loot Table
+
+**`data/horizondata/loot_tables/blocks/forge.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizondata:forge",
+          "functions": [{ "function": "minecraft:copy_block_entity_nbt",
+            "source": "block_entity",
+            "ops": [{ "source": "heat", "target": "heat", "op": "replace" }] }]
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## 20. Tag JSONs
+
+### 20.1 Common Ore Tags (c: namespace)
+
+**`data/c/tags/items/ores/copper.json`**
+```json
+{ "values": ["horizondata:copper_ore", "horizondata:deepslate_copper_ore"] }
+```
+
+**`data/c/tags/items/raw_materials/copper.json`**
+```json
+{ "values": ["horizondata:raw_copper"] }
+```
+
+**`data/c/tags/items/ingots/copper.json`**
+```json
+{ "values": ["horizondata:copper_ingot"] }
+```
+
+### 20.2 HorizonData Internal Tags
+
+**`data/horizondata/tags/items/forge_fuels.json`**
+```json
+{
+  "values": [
+    "horizondata:coke_coal",
+    "horizondata:coal_chunk",
+    "#c:coals",
+    "horizondata:oil_bucket",
+    "horizondata:natural_gas_canister"
+  ]
+}
+```
+
+**`data/horizondata/tags/items/hammers.json`**
+```json
+{
+  "values": [
+    "horizondata:hammer_stone",
+    "horizondata:hammer_copper",
+    "horizondata:hammer_iron",
+    "horizondata:hammer_steel"
+  ]
+}
+```
+
+**`data/horizondata/tags/items/saws.json`**
+```json
+{ "values": ["horizondata:saw_iron", "horizondata:saw_steel"] }
+```
+
+**`data/horizondata/tags/items/tongs.json`**
+```json
+{ "values": ["horizondata:tongs_iron", "horizondata:tongs_steel"] }
+```
+
+**`data/horizondata/tags/blocks/horizon_workshops.json`**
+```json
+{
+  "values": [
+    "horizondata:forge", "horizondata:carpentry_bench", "horizondata:loom",
+    "horizondata:alchemy_lab", "horizondata:kitchen", "horizondata:tannery",
+    "horizondata:pottery_wheel", "horizondata:bloomery", "horizondata:crucible",
+    "horizondata:anvil_block", "horizondata:grindstone_block", "horizondata:workbench"
+  ]
+}
+```
+
+**`data/horizondata/tags/blocks/load_bearing.json`**
+```json
+{
+  "values": [
+    "#minecraft:base_stone_overworld",
+    "horizondata:granite_pillar",
+    "horizondata:limestone_pillar",
+    "horizondata:iron_block",
+    "horizondata:steel_block"
+  ]
+}
+```
+
+**`data/horizondata/tags/blocks/weatherable_metal.json`**
+```json
+{
+  "values": [
+    "horizondata:iron_block", "horizondata:copper_block",
+    "horizondata:bronze_block", "horizondata:lead_block"
+  ]
+}
+```
+
+---
+
+## 21. Lang / Localization
+
+**`assets/horizondata/lang/en_us.json`** (representative entries)
+
+```json
+{
+  "itemGroup.horizondata.ores":          "Horizon: Ores & Materials",
+  "itemGroup.horizondata.blocks":        "Horizon: Blocks & Shapes",
+  "itemGroup.horizondata.workshops":     "Horizon: Workshop Stations",
+  "itemGroup.horizondata.fuels":         "Horizon: Fuels & Energy",
+
+  "block.horizondata.forge":             "Forge",
+  "block.horizondata.carpentry_bench":   "Carpentry Bench",
+  "block.horizondata.loom":             "Loom",
+  "block.horizondata.alchemy_lab":      "Alchemy Laboratory",
+  "block.horizondata.kitchen":          "Kitchen Station",
+  "block.horizondata.tannery":          "Tannery",
+  "block.horizondata.pottery_wheel":    "Pottery Wheel",
+  "block.horizondata.bloomery":         "Bloomery",
+  "block.horizondata.crucible":         "Crucible",
+  "block.horizondata.anvil_block":      "Horizon Anvil",
+  "block.horizondata.grindstone_block": "Ore Grindstone",
+  "block.horizondata.workbench":        "Horizon Workbench",
+
+  "block.horizondata.copper_ore":        "Copper Ore",
+  "block.horizondata.deepslate_copper_ore": "Deepslate Copper Ore",
+  "block.horizondata.tin_ore":           "Tin Ore",
+  "block.horizondata.silver_ore":        "Silver Ore",
+  "block.horizondata.lead_ore":          "Lead Ore",
+  "block.horizondata.zinc_ore":          "Zinc Ore",
+  "block.horizondata.nickel_ore":        "Nickel Ore",
+  "block.horizondata.platinum_ore":      "Platinum Ore",
+  "block.horizondata.tungsten_ore":      "Tungsten Ore",
+  "block.horizondata.titanium_ore":      "Titanium Ore",
+  "block.horizondata.aluminum_ore":      "Bauxite Ore",
+  "block.horizondata.manganese_ore":     "Manganese Ore",
+  "block.horizondata.chromium_ore":      "Chromium Ore",
+  "block.horizondata.cobalt_ore":        "Cobalt Ore",
+  "block.horizondata.uranium_ore":       "Uranium Ore",
+  "block.horizondata.rare_earth_ore":    "Rare Earth Ore",
+  "block.horizondata.salt_crystal_block":"Salt Crystal",
+  "block.horizondata.ruby_ore":          "Ruby Ore",
+  "block.horizondata.sapphire_ore":      "Sapphire Ore",
+
+  "item.horizondata.raw_copper":         "Raw Copper",
+  "item.horizondata.copper_ingot":       "Copper Ingot",
+  "item.horizondata.copper_dust":        "Copper Dust",
+  "item.horizondata.copper_plate":       "Copper Plate",
+  "item.horizondata.copper_wire":        "Copper Wire",
+  "item.horizondata.bronze_ingot":       "Bronze Ingot",
+  "item.horizondata.steel_ingot":        "Steel Ingot",
+  "item.horizondata.pig_iron_ingot":     "Pig Iron",
+  "item.horizondata.iron_billet":        "Iron Billet",
+  "item.horizondata.iron_slag":          "Iron Slag",
+  "item.horizondata.tungsten_ingot":     "Tungsten Ingot",
+  "item.horizondata.titanium_ingot":     "Titanium Ingot",
+  "item.horizondata.uranium_ingot":      "Uranium Ingot",
+  "item.horizondata.rare_earth_ingot":   "Rare Earth Alloy",
+  "item.horizondata.stainless_steel_ingot": "Stainless Steel Ingot",
+  "item.horizondata.titanium_steel_ingot":  "Titanium-Steel Ingot",
+
+  "item.horizondata.hammer_stone":       "Stone Hammer",
+  "item.horizondata.hammer_copper":      "Copper Hammer",
+  "item.horizondata.hammer_iron":        "Iron Hammer",
+  "item.horizondata.hammer_steel":       "Steel Hammer",
+  "item.horizondata.tongs_iron":         "Iron Tongs",
+  "item.horizondata.saw_iron":           "Iron Saw",
+  "item.horizondata.chisel_iron":        "Iron Chisel",
+  "item.horizondata.bellows":            "Bellows",
+  "item.horizondata.draw_plate":         "Draw Plate",
+
+  "item.horizondata.coke_coal":          "Coke Coal",
+  "item.horizondata.lignite_coal":       "Lignite",
+  "item.horizondata.peat_brick":         "Peat Brick",
+  "item.horizondata.dried_dung":         "Dried Dung Brick",
+  "item.horizondata.oil_bucket":         "Crude Oil Bucket",
+  "item.horizondata.diesel_bucket":      "Diesel Bucket",
+  "item.horizondata.natural_gas_canister": "Natural Gas Canister",
+  "item.horizondata.hydrogen_tank":      "Hydrogen Tank",
+  "item.horizondata.uranium_fuel_rod":   "Uranium Fuel Rod",
+
+  "horizondata.gui.forge.heat":          "Heat: %d°C",
+  "horizondata.gui.forge.target":        "Target: %d°C",
+  "horizondata.gui.forge.progress":      "Progress: %d%%",
+  "horizondata.gui.too_cold":            "Too cold to smelt this material",
+  "horizondata.gui.age_locked":          "Requires %s era",
+  "horizondata.tooltip.heat_value":      "Heat Value: %,d kJ",
+  "horizondata.tooltip.max_temp":        "Max Temp: %d°C",
+  "horizondata.tooltip.pollution":       "Pollution: %s",
+  "horizondata.tooltip.melting_point":   "Melting Point: %d°C",
+  "horizondata.tooltip.hardness":        "Hardness: %d/10",
+  "horizondata.tooltip.corrosion":       "Corrosion Resistance: %.0f%%",
+  "horizondata.tooltip.conductivity":    "Conductivity: %.0f%%",
+
+  "horizondata.collapse.warning":        "§c[Warning] Structural overload detected nearby!",
+  "horizondata.collapse.event":          "§4[Collapse] Structure failure at %d, %d, %d",
+  "horizondata.weathering.stage.0":      "Clean",
+  "horizondata.weathering.stage.1":      "Tarnished",
+  "horizondata.weathering.stage.2":      "Oxidizing",
+  "horizondata.weathering.stage.3":      "Heavily Oxidized",
+  "horizondata.weathering.stage.4":      "Fully Weathered",
+
+  "advancements.horizondata.root.title":       "Working the Earth",
+  "advancements.horizondata.root.description": "Discover the material world beneath your feet.",
+  "advancements.horizondata.first_smelt.title": "Hot Work",
+  "advancements.horizondata.first_smelt.description": "Smelt your first metal in a Forge.",
+  "advancements.horizondata.first_alloy.title": "Better Together",
+  "advancements.horizondata.first_alloy.description": "Create your first alloy in a Crucible.",
+  "advancements.horizondata.tungsten.title":   "The Hardest Metal",
+  "advancements.horizondata.tungsten.description": "Smelt Tungsten in an electric arc furnace.",
+  "advancements.horizondata.collapse.title":   "Load-Bearing",
+  "advancements.horizondata.collapse.description": "Survive a structural collapse.",
+  "advancements.horizondata.all_workshops.title": "The Complete Workshop",
+  "advancements.horizondata.all_workshops.description": "Build all 12 workshop stations."
+}
+```
+
+---
+
+## 22. build.gradle
+
+```groovy
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.+'
+}
+
+group = 'com.horizonpack'
+version = '1.0.0'
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+minecraft {
+    accessTransformers { file('src/main/resources/META-INF/accesstransformer.cfg') }
+}
+
+runs {
+    configureEach {
+        systemProperty 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    client { systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id }
+    server { programArgument '--nogui' }
+    gameTestServer { programArgument '--nogui' }
+    data {
+        programArguments.addAll '--mod', project.mod_id,
+            '--all', '--output', file('src/generated/resources/').getAbsolutePath(),
+            '--existing', file('src/main/resources/').getAbsolutePath()
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+repositories {
+    maven { url 'https://maven.neoforged.net/releases' }
+    maven { url 'https://maven.horizonpack.com/releases' }  // HorizonCore
+}
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neoforge_version}"
+
+    // HorizonCore — required dependency
+    implementation "com.horizonpack:horizoncore:1.0.0"
+
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+}
+
+tasks.withType(ProcessResources).configureEach {
+    inputs.property 'version', project.version
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(project.properties)
+    }
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title'   : 'horizondata',
+            'Specification-Version' : '1',
+            'Implementation-Title'  : project.name,
+            'Implementation-Version': project.jar.archiveVersion,
+            'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+}
+
+test { useJUnitPlatform() }
+```
+
+---
+
+## 23. neoforge.mods.toml
+
+```toml
+modLoader    = "javafml"
+loaderVersion = "[2,)"
+license      = "MIT"
+
+[[mods]]
+    modId       = "horizondata"
+    version     = "1.0.0"
+    displayName = "HorizonData"
+    description = '''
+        The complete material, ore, block, fuel, and crafting registry for the Horizon Corebreach modpack.
+        Provides all ores, processed metals, alloys, wood species, stone variants,
+        non-cubic block shapes, fuel heat system, workshop stations, structural integrity,
+        and material weathering. Required by most other Horizon mods.
+    '''
+    authors        = "HorizonPack Team"
+    displayURL     = "https://modrinth.com/mod/horizondata"
+    logoFile       = "horizondata.png"
+    updateJSONURL  = "https://horizonpack.com/updates/horizondata.json"
+
+[[dependencies.horizondata]]
+    modId       = "neoforge"
+    type        = "required"
+    versionRange = "[21.1,22)"
+    ordering    = "NONE"
+    side        = "BOTH"
+
+[[dependencies.horizondata]]
+    modId       = "minecraft"
+    type        = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering    = "NONE"
+    side        = "BOTH"
+
+[[dependencies.horizondata]]
+    modId       = "horizoncore"
+    type        = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering    = "AFTER"
+    side        = "BOTH"
+
+[[mixins]]
+    config = "horizondata.mixins.json"
+```
+
+---
+
+## 24. Critical Implementation Notes
+
+### 24.1 Non-Cubic Block Rendering
+Slope, arch, pillar, and beam blocks all use `VoxelShape`-based collision and custom `BakedModel` implementations. They must be registered as `RenderType.cutout()` or `translucent` where applicable — set via `ItemBlockRenderTypes.setRenderLayer(block, RenderType.cutout())` in `@OnlyIn(Dist.CLIENT)` setup.
+
+### 24.2 Heat-Gated Recipes & Age Locking
+`ForgeRecipe.matches()` calls back into HorizonCore's `IHorizonPlayerData` capability via `HorizonCore.getPlayerData(player)` to verify the player's current age meets `required_age`. If HorizonCore is absent (dependency mismatch) this check is bypassed with a warning log — **never crash on missing soft dependency.**
+
+### 24.3 Ore Processing and Fortune Enchant
+`OreMinedEvent` is fired before the vanilla loot table drop. If `OreMinedEvent` is not canceled, vanilla drops proceed. To avoid double-dropping, `HorizonOreBlock` overrides `getDrops()` to return an empty list when `OreMinedEvent` is handled, and the event handler injects the correct `ProcessingStage.RAW` item with Fortune applied via `EnchantmentHelper.getItemEnchantmentLevel`.
+
+### 24.4 Structural Integrity Performance
+Running `StructuralIntegrity.checkSupport()` on every single block place would be too expensive. The check is:
+- **Immediate** only for blocks in `#horizondata:load_bearing` tag placed at Y > 60 (surface structures)
+- **Deferred** for underground placement — added to a priority queue checked on `collapseCheckInterval` ticks
+- **Skipped entirely** if `enableStructuralIntegrity = false` in config
+
+### 24.5 Weathering and Saved Data
+Block weathering state is stored in `BlockEntityTag` NBT, not block state properties. This means weathering blocks must be `BaseEntityBlock` subclasses with a minimal `BlockEntity` that only stores the `weather_stage` integer. The `WeatheringBlockEntity` is extremely lightweight (8 bytes NBT) and uses `LazyOptional` to avoid memory pressure in large structures.
+
+### 24.6 Alloy Ratios in Crucible
+The `CrucibleBlockEntity` stores four float slots `mixRatios[0..3]` tracking how many ingot-equivalents of each metal are currently molten. When the total ratio matches a registered `AlloyFormula` within ±5% tolerance (configurable), the output triggers. This tolerancing prevents players from needing to be pixel-perfect in their ratio measurement.
+
+### 24.7 Oil and Gas Deposit Blocks
+`OilDepositBlock` does not behave like a standard block. It:
+- Uses a custom `BlockEntity` (`OilDepositBlockEntity`) tracking reservoir volume (in mB)
+- Cannot be mined directly — requires `oil_pump` block (registered in HorizonPower)
+- Emits `OreMinedEvent` with `ProcessingStage.RAW` and item type `oil_bucket` when pump extracts
+- Has `GasDepositBlock` sibling that plays explosion sound + spawns fire particles if ignited while uncontained
+
+### 24.8 Creative Tabs
+HorizonData ships 4 creative tabs:
+- **Ores & Materials** — all ore blocks, raw ores, ingots, dusts, nuggets, plates, rods, wires, gears
+- **Blocks & Shapes** — all wood types, stone types, slopes, arches, pillars, beams, composites
+- **Workshop Stations** — all 12 workshop blocks + their tool items
+- **Fuels & Energy** — all fuel items, fuel storage blocks
+
+### 24.9 Data Generation
+`DataGenerator` classes exist for:
+- `OreBlockStateProvider` — generates all 50 ore blockstate + model JSONs automatically
+- `WoodBlockStateProvider` — generates all 21 × 20 wood variant blockstate + model JSONs
+- `StoneBlockStateProvider` — generates all 15 × 13 stone variant blockstate + model JSONs
+- `OreRecipeProvider` — generates all grindstone + forge + bloomery + crucible recipe JSONs for all metals
+- `OreLootTableProvider` — generates all 50 ore loot tables
+- `TagProvider` — generates all c: namespace tags
+
+Run via `./gradlew runData` before building.

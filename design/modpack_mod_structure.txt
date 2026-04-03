@@ -1,0 +1,110 @@
+Foundation
+1. HorizonCore:-
+   HorizonCore (API, events, config)
+   HorizonAges (era progression)
+   HorizonTech (tech tree)
+   HorizonScience (R&D system)
+   HorizonEducation (skills, learning)
+
+Foundation
+2. HorizonData:-
+   HorizonOres (geology, ores)
+   HorizonCraft (crafting, workshops)
+   HorizonBlocks (block shapes, materials)
+   HorizonFuels (fuel types)
+
+
+World
+3. HorizonWorld:-
+   HorizonGenesis (terrain, geology)
+   HorizonClimate (weather, seasons)
+   HorizonEcology (ecosystems)
+
+World
+4. HorizonBiome:-
+   HorizonFlora (plants, crops)
+   HorizonFauna (animals, AI)
+   HorizonMicrobiology (diseases, germs)
+
+World
+5. HorizonPower:-
+   HorizonPower (electrical grid)
+   HorizonFuels → energy side
+   HorizonTransport (vehicles, roads)
+   HorizonIndustry (factories, production)
+
+Civilization
+6. HorizonSociety:-
+   HorizonSociety (NPC civs, AI)
+   HorizonGovernment (politics)
+   HorizonDiplomacy (treaties, alliances)
+   HorizonEspionage (spies)
+
+Civilization
+7. HorizonEconomy:-
+   HorizonEconomy (trade, currency)
+   HorizonLabor (jobs, unions)
+   HorizonAgriculture (farming systems)
+   HorizonFinance (banking, tax)
+
+Civilization
+8. HorizonCulture:-
+   HorizonReligion (faith, churches)
+   HorizonLinguistics (languages)
+   HorizonLiterature (writing, books)
+   HorizonMusic (instruments, recording)
+   HorizonArt (visual arts)
+
+Civilization
+9. HorizonMilitary:-
+   HorizonMilitary (armies, warfare)
+   HorizonCrime (crime, law)
+   HorizonEmergency (disaster response)
+
+Civilization
+10. HorizonKnowledge:-
+    HorizonArchaeology (ruins, artifacts)
+    HorizonPhilosophy (ethics, ideas)
+    HorizonEthics (moral systems)
+    HorizonCommunication (info networks)
+
+Civilization
+11. HorizonSettlement:-
+    HorizonArchitecture (building styles)
+    HorizonUrban (city planning)
+    HorizonInfrastructure (roads, sewers)
+
+Player
+12. HorizonSurvival:-
+    HorizonNutrition (food, health)
+    HorizonMedicine (healthcare)
+    HorizonCooking (food prep)
+
+Player
+13. HorizonSkills:-
+    HorizonSkills (RPG skill tree)
+    HorizonSports (athletics)
+    HorizonPsychology (mental health)
+
+Player
+14. HorizonFamily:-
+    HorizonFamily (relationships, aging)
+    HorizonSocial (reputation, fame)
+
+Player
+15. HorizonExplore:-
+    HorizonNavigation (maps, compass)
+    HorizonOcean (seafaring)
+    HorizonSpace (endgame space)
+
+Endgame
+16. HorizonDimensions:-
+    HorizonDimensions (parallel worlds)
+    HorizonMagic (arcane systems)
+    HorizonMyth (legends, prophecy)
+
+Endgame
+17. HorizonCorebreach:-
+    Corebreach endgame content
+    Final boss / narrative arc
+    Reality corruption systems

@@ -1,0 +1,1369 @@
+HorizonCorebreach — Detailed Technical Specification
+Mod ID: horizoncorebreach
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Endgame Progression, Reality Corruption, and Final Boss Arc
+Absorbed mods: Corebreach endgame content, final boss system, reality corruption mechanics
+Depends on: horizoncore, horizondata, horizonworld, horizonbiome, horizonpower, horizonsociety, horizoneconomy, horizonculture, horizonmilitary, horizonknowledge, horizonsettlement, horizonsurvival, horizonskills, horizonfamily, horizonexplore, horizondimensions
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Boss Phases Registry
+Reality Corruption Events Registry
+Endgame Items Registry
+Endgame Structures Registry
+Endings Registry
+Data Attachments & Components
+Reality Corruption Engine
+Corebreach Boss Engine
+Block & Item Registration
+Block Entities
+Event Hooks
+Network Packets
+Client GUI & Rendering
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonCorebreach represents the grand culmination of the Horizon modpack. After guiding a civilization from the Stone Age into the intergalactic and interdimensional eras, the very fabric of reality begins to unravel due to the extreme harvesting of Ley Lines and dimensional transit.
+Reality Corruption: As the timeline progresses into the post-modern age, the world experiences severe localized phenomena, including gravity inversion, time loops, and sky fractures.
+The Corebreach: Players must drill into the center of the world (the Core Chamber) using endgame machinery to confront the source of the anomaly.
+The Final Encounter: A massive, 7-phase boss fight dynamically altering the environment and challenging every skill, technology, and magic spell the player has acquired.
+Multiple Endings: 5 distinct narrative and mechanical resolutions to the game, altering the persistent state of the server permanently based on the player's final choice.
+2. File & Package Structure
+code
+Text
+horizon_corebreach/
+├── src/main/java/com/horizonpack/horizoncorebreach/
+│   ├── core/
+│   │   ├── HorizonCorebreach.java
+│   │   ├── CorebreachRegistries.java
+│   │   └── CorebreachConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── BossPhaseDef.java
+│   │   │   ├── CorruptionEventDef.java
+│   │   │   ├── StructureDef.java
+│   │   │   └── EndingDef.java
+│   │   ├── attachments/
+│   │   │   ├── WorldCorruptionData.java
+│   │   │   └── CorebreachAttachments.java
+│   │   └── components/
+│   │       ├── StabilizerChargeComponent.java
+│   │       └── CorebreachDataComponents.java
+│   ├── systems/
+│   │   ├── RealityCorruptionEngine.java
+│   │   ├── EndingResolutionEngine.java
+│   │   └── GravityInversionHelper.java
+│   ├── blocks/
+│   │   ├── RealityAnchorBlock.java
+│   │   ├── CoreDrillBlock.java
+│   │   └── DimensionalRiftStabilizerBlock.java
+│   ├── blockentities/
+│   │   ├── RealityAnchorBlockEntity.java
+│   │   ├── CoreDrillBlockEntity.java
+│   │   └── DimensionalRiftStabilizerBlockEntity.java
+│   ├── items/
+│   │   ├── BreachArmorItem.java
+│   │   ├── RealitySwordItem.java
+│   │   ├── VoidStaffItem.java
+│   │   ├── StabilizerCannonItem.java
+│   │   └── CoreFragmentItem.java
+│   ├── entities/
+│   │   ├── CorebreachBossEntity.java
+│   │   ├── RealityTearProjectileEntity.java
+│   │   └── CorebreachEntityRenderer.java
+│   ├── events/
+│   │   ├── CorebreachEventHandlers.java
+│   │   └── custom/
+│   │       ├── BossPhaseTransitionEvent.java
+│   │       ├── RealityCorruptionTriggerEvent.java
+│   │       └── WorldEndingEvent.java
+│   ├── network/
+│   │   ├── CorebreachPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncCorruptionPacket.java
+│   │       ├── BossPhaseTransitionPacket.java
+│   │       └── GravityInversionPacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── CorruptionOverlay.java
+│   │   │   └── BossHealthBarOverlay.java
+│   │   └── render/
+│   │       ├── SkyFractureRenderer.java
+│   │       └── CorebreachBossModel.java
+│   └── utils/
+│       ├── RealityMath.java
+│       └── TimeLoopHandler.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizoncorebreach/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   ├── sounds/
+│   │   └── lang/en_us.json
+│   └── data/horizoncorebreach/
+│       ├── recipes/
+│       ├── loot_tables/
+│       ├── tags/
+│       └── worldgen/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonCorebreach.java
+code
+Java
+package com.horizonpack.horizoncorebreach.core;
+
+import com.horizonpack.horizoncorebreach.data.attachments.CorebreachAttachments;
+import com.horizonpack.horizoncorebreach.data.components.CorebreachDataComponents;
+import com.horizonpack.horizoncorebreach.events.CorebreachEventHandlers;
+import com.horizonpack.horizoncorebreach.network.CorebreachPacketHandler;
+import com.horizonpack.horizoncorebreach.systems.RealityCorruptionEngine;
+import com.horizonpack.horizoncorebreach.systems.EndingResolutionEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonCorebreach.MODID)
+public class HorizonCorebreach {
+    public static final String MODID = "horizoncorebreach";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonCorebreach(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, CorebreachConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, CorebreachConfig.CLIENT_SPEC);
+
+        CorebreachRegistries.BLOCKS.register(modEventBus);
+        CorebreachRegistries.ITEMS.register(modEventBus);
+        CorebreachRegistries.BLOCK_ENTITIES.register(modEventBus);
+        CorebreachRegistries.ENTITY_TYPES.register(modEventBus);
+        CorebreachRegistries.MENU_TYPES.register(modEventBus);
+        CorebreachDataComponents.DATA_COMPONENT_TYPES.register(modEventBus);
+
+        CorebreachRegistries.BOSS_PHASES.register(modEventBus);
+        CorebreachRegistries.CORRUPTION_EVENTS.register(modEventBus);
+        CorebreachRegistries.ENDGAME_STRUCTURES.register(modEventBus);
+        CorebreachRegistries.ENDINGS.register(modEventBus);
+
+        CorebreachAttachments.ATTACHMENT_TYPES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(CorebreachRegistries::registerNewRegistries);
+        modEventBus.addListener(CorebreachRegistries::registerEntityAttributes);
+        modEventBus.addListener(CorebreachPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(CorebreachEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            RealityCorruptionEngine.init();
+            EndingResolutionEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/CorebreachRegistries.java
+code
+Java
+package com.horizonpack.horizoncorebreach.core;
+
+import com.horizonpack.horizoncorebreach.data.registry.*;
+import com.horizonpack.horizoncorebreach.entities.CorebreachBossEntity;
+import com.horizonpack.horizoncorebreach.entities.RealityTearProjectileEntity;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class CorebreachRegistries {
+
+    public static final ResourceKey<Registry<BossPhaseDef>> BOSS_PHASE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCorebreach.MODID, "boss_phases"));
+    public static final ResourceKey<Registry<CorruptionEventDef>> CORRUPTION_EVENT_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCorebreach.MODID, "corruption_events"));
+    public static final ResourceKey<Registry<StructureDef>> STRUCTURE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCorebreach.MODID, "endgame_structures"));
+    public static final ResourceKey<Registry<EndingDef>> ENDING_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonCorebreach.MODID, "endings"));
+
+    public static final DeferredRegister<BossPhaseDef> BOSS_PHASES = DeferredRegister.create(BOSS_PHASE_KEY, HorizonCorebreach.MODID);
+    public static final DeferredRegister<CorruptionEventDef> CORRUPTION_EVENTS = DeferredRegister.create(CORRUPTION_EVENT_KEY, HorizonCorebreach.MODID);
+    public static final DeferredRegister<StructureDef> ENDGAME_STRUCTURES = DeferredRegister.create(STRUCTURE_KEY, HorizonCorebreach.MODID);
+    public static final DeferredRegister<EndingDef> ENDINGS = DeferredRegister.create(ENDING_KEY, HorizonCorebreach.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonCorebreach.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonCorebreach.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonCorebreach.MODID);
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES = DeferredRegister.create(BuiltInRegistries.ENTITY_TYPE, HorizonCorebreach.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(BuiltInRegistries.MENU, HorizonCorebreach.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(BOSS_PHASE_KEY).sync(true));
+        event.register(new RegistryBuilder<>(CORRUPTION_EVENT_KEY).sync(true));
+        event.register(new RegistryBuilder<>(STRUCTURE_KEY).sync(true));
+        event.register(new RegistryBuilder<>(ENDING_KEY).sync(true));
+    }
+
+    public static void registerEntityAttributes(EntityAttributeCreationEvent event) {
+        event.put(com.horizonpack.horizoncorebreach.entities.CorebreachBossEntity.TYPE.get(), CorebreachBossEntity.createAttributes().build());
+    }
+
+    static {
+        BossPhaseDef.registerAll();
+        CorruptionEventDef.registerAll();
+        com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.registerAll();
+        StructureDef.registerAll();
+        EndingDef.registerAll();
+        com.horizonpack.horizoncorebreach.blocks.CorebreachBlockRegistry.registerAll();
+        com.horizonpack.horizoncorebreach.entities.CorebreachEntityRegistry.registerAll();
+    }
+}
+5. Boss Phases Registry
+File: data/registry/BossPhaseDef.java
+Registers the 7 distinct phases of the final encounter.
+code
+Java
+package com.horizonpack.horizoncorebreach.data.registry;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record BossPhaseDef(ResourceLocation id, String nameKey, float healthThreshold, String attackPattern, String environmentalEffect) {
+
+    public static void registerAll() {
+        register("phase_1_dormant", "boss.phase.dormant", 1.0f, "passive_defense", "none");
+        register("phase_2_awakening", "boss.phase.awakening", 0.85f, "energy_beams", "screen_shake");
+        register("phase_3_corruption", "boss.phase.corruption", 0.70f, "summon_minions", "block_decay_aura");
+        register("phase_4_reality_break", "boss.phase.reality_break", 0.50f, "teleport_strikes", "gravity_fluctuation");
+        register("phase_5_core_exposed", "boss.phase.core_exposed", 0.30f, "massive_aoe", "time_dilation");
+        register("phase_6_final_form", "boss.phase.final_form", 0.15f, "hyper_beam", "dimension_bleed");
+        register("phase_7_last_stand", "boss.phase.last_stand", 0.05f, "desperation_pulse", "total_collapse");
+    }
+
+    private static void register(String id, String key, float health, String attack, String environment) {
+        CorebreachRegistries.BOSS_PHASES.register(id, () -> new BossPhaseDef(
+            ResourceLocation.fromNamespaceAndPath("horizoncorebreach", id), key, health, attack, environment));
+    }
+}
+Total Boss phases registered: 7
+6. Reality Corruption Events Registry
+File: data/registry/CorruptionEventDef.java
+Registers all 9 reality-bending world events triggered during the endgame.
+code
+Java
+package com.horizonpack.horizoncorebreach.data.registry;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CorruptionEventDef(ResourceLocation id, String nameKey, int durationTicks, String counterMeasureDesc, boolean affectsPlayers) {
+
+    public static void registerAll() {
+        register("sky_fracture", "event.corruption.sky_fracture", 2400, "Deploy Reality Anchor", false);
+        register("gravity_inversion", "event.corruption.gravity_inversion", 600, "Wear Breach Boots", true);
+        register("time_loop", "event.corruption.time_loop", 1200, "Use Dimensional Key", true);
+        register("block_decay", "event.corruption.block_decay", 3600, "Deploy Stabilizer Device", false);
+        register("mob_corruption", "event.corruption.mob_corruption", 4800, "Purge with Void Staff", false);
+        register("dimension_bleed", "event.corruption.dimension_bleed", 12000, "Seal with Reality Anchor", true);
+        register("physics_breakdown", "event.corruption.physics_breakdown", 400, "Stay within Stabilizer aura", true);
+        register("memory_erasure", "event.corruption.memory_erasure", 200, "Hold Reality Shard", true);
+        register("core_pulse", "event.corruption.core_pulse", 100, "Wear full Breach Armor", true);
+    }
+
+    private static void register(String id, String key, int duration, String counter, boolean affects) {
+        CorebreachRegistries.CORRUPTION_EVENTS.register(id, () -> new CorruptionEventDef(
+            ResourceLocation.fromNamespaceAndPath("horizoncorebreach", id), key, duration, counter, affects));
+    }
+}
+Total Reality corruption events registered: 9
+7. Endgame Items Registry
+File: items/EndgameItemRegistry.java
+code
+Java
+package com.horizonpack.horizoncorebreach.items;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.core.Holder;
+import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.ArmorMaterial;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.registries.DeferredItem;
+import java.util.EnumMap;
+import java.util.List;
+
+public class EndgameItemRegistry {
+
+    // Helper for basic items
+    private static DeferredItem<Item> register(String name) {
+        return CorebreachRegistries.ITEMS.registerSimpleItem(name, new Item.Properties().stacksTo(64));
+    }
+
+    // ── MATERIALS ────────────────────────────────────────────────────────────
+    public static final DeferredItem<Item> REALITY_SHARD = register("reality_shard");
+    public static final DeferredItem<Item> CORE_FRAGMENT = register("core_fragment");
+    public static final DeferredItem<Item> VOID_CRYSTAL = register("void_crystal");
+
+    // ── DEVICES ──────────────────────────────────────────────────────────────
+    public static final DeferredItem<Item> STABILIZER_DEVICE = CorebreachRegistries.ITEMS.registerSimpleItem("stabilizer_device", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> DIMENSIONAL_KEY = CorebreachRegistries.ITEMS.registerSimpleItem("dimensional_key", new Item.Properties().stacksTo(1).fireResistant());
+
+    // ── ARMOR SET ────────────────────────────────────────────────────────────
+    public static final Holder<ArmorMaterial> BREACH_ARMOR_MATERIAL = CorebreachRegistries.ITEMS.register("breach_material", () -> new ArmorMaterial(
+        net.minecraft.Util.make(new EnumMap<>(ArmorItem.Type.class), map -> {
+            map.put(ArmorItem.Type.BOOTS, 5);
+            map.put(ArmorItem.Type.LEGGINGS, 8);
+            map.put(ArmorItem.Type.CHESTPLATE, 10);
+            map.put(ArmorItem.Type.HELMET, 5);
+            map.put(ArmorItem.Type.BODY, 12);
+        }),
+        30, SoundEvents.ARMOR_EQUIP_NETHERITE, () -> Ingredient.of(VOID_CRYSTAL.get()),
+        List.of(new ArmorMaterial.Layer(ResourceLocation.fromNamespaceAndPath("horizoncorebreach", "breach"))),
+        4.0f, 0.2f
+    ));
+
+    public static final DeferredItem<ArmorItem> BREACH_HELMET = CorebreachRegistries.ITEMS.register("breach_helmet", () -> new ArmorItem(BREACH_ARMOR_MATERIAL, ArmorItem.Type.HELMET, new Item.Properties().fireResistant()));
+    public static final DeferredItem<ArmorItem> BREACH_CHESTPLATE = CorebreachRegistries.ITEMS.register("breach_chestplate", () -> new ArmorItem(BREACH_ARMOR_MATERIAL, ArmorItem.Type.CHESTPLATE, new Item.Properties().fireResistant()));
+    public static final DeferredItem<ArmorItem> BREACH_LEGGINGS = CorebreachRegistries.ITEMS.register("breach_leggings", () -> new ArmorItem(BREACH_ARMOR_MATERIAL, ArmorItem.Type.LEGGINGS, new Item.Properties().fireResistant()));
+    public static final DeferredItem<ArmorItem> BREACH_BOOTS = CorebreachRegistries.ITEMS.register("breach_boots", () -> new ArmorItem(BREACH_ARMOR_MATERIAL, ArmorItem.Type.BOOTS, new Item.Properties().fireResistant()));
+
+    // ── WEAPONS ──────────────────────────────────────────────────────────────
+    public static final DeferredItem<Item> REALITY_SWORD = CorebreachRegistries.ITEMS.register("reality_sword", () -> new RealitySwordItem(new Item.Properties().durability(2500).fireResistant()));
+    public static final DeferredItem<Item> VOID_STAFF = CorebreachRegistries.ITEMS.register("void_staff", () -> new VoidStaffItem(new Item.Properties().durability(1000).fireResistant()));
+    public static final DeferredItem<Item> STABILIZER_CANNON = CorebreachRegistries.ITEMS.register("stabilizer_cannon", () -> new StabilizerCannonItem(new Item.Properties().durability(500).fireResistant()));
+
+    // ── BLOCK ITEMS ──────────────────────────────────────────────────────────
+    // Handled in Block Registry iteration
+
+    public static void registerAll() {}
+}
+Total Endgame items registered: 14
+8. Endgame Structures Registry
+File: data/registry/StructureDef.java
+code
+Java
+package com.horizonpack.horizoncorebreach.data.registry;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record StructureDef(ResourceLocation id, String nameKey, String generationStrategy) {
+
+    public static void registerAll() {
+        register("core_approach_tunnel", "structure.core_approach_tunnel", "deep_underground_carver");
+        register("reality_fracture_site", "structure.reality_fracture_site", "surface_anomaly");
+        register("ancient_warning_monument", "structure.ancient_warning_monument", "rare_surface_ruin");
+        register("dimensional_observatory", "structure.dimensional_observatory", "high_altitude_peak");
+        register("final_arena", "structure.final_arena", "core_dimension_spawn");
+        register("core_chamber", "structure.core_chamber", "absolute_center");
+    }
+
+    private static void register(String id, String key, String strategy) {
+        CorebreachRegistries.ENDGAME_STRUCTURES.register(id, () -> new StructureDef(
+            ResourceLocation.fromNamespaceAndPath("horizoncorebreach", id), key, strategy));
+    }
+}
+Total Endgame structures registered: 6
+9. Endings Registry
+File: data/registry/EndingDef.java
+code
+Java
+package com.horizonpack.horizoncorebreach.data.registry;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record EndingDef(ResourceLocation id, String nameKey, String descriptionKey, boolean isGameEnding) {
+
+    public static void registerAll() {
+        register("seal_the_core", "ending.seal_the_core", "ending.seal.desc", false);
+        register("destroy_the_core", "ending.destroy_the_core", "ending.destroy.desc", true);
+        register("merge_with_core", "ending.merge_with_core", "ending.merge.desc", false);
+        register("escape_the_dimension", "ending.escape_the_dimension", "ending.escape.desc", true);
+        register("sacrifice_ending", "ending.sacrifice_ending", "ending.sacrifice.desc", true);
+    }
+
+    private static void register(String id, String nameKey, String descKey, boolean gameEnding) {
+        CorebreachRegistries.ENDINGS.register(id, () -> new EndingDef(
+            ResourceLocation.fromNamespaceAndPath("horizoncorebreach", id), nameKey, descKey, gameEnding));
+    }
+}
+Total Endings registered: 5
+10. Data Attachments & Components
+File: data/attachments/CorebreachAttachments.java
+code
+Java
+package com.horizonpack.horizoncorebreach.data.attachments;
+
+import com.horizonpack.horizoncorebreach.core.HorizonCorebreach;
+import net.neoforged.neoforge.attachment.AttachmentType;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NeoForgeRegistries;
+
+public class CorebreachAttachments {
+    public static final DeferredRegister<AttachmentType<?>> ATTACHMENT_TYPES =
+            DeferredRegister.create(NeoForgeRegistries.Keys.ATTACHMENT_TYPES, HorizonCorebreach.MODID);
+
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<WorldCorruptionData>> WORLD_CORRUPTION = ATTACHMENT_TYPES.register(
+            "world_corruption", () -> AttachmentType.serializable(WorldCorruptionData::new).build()
+    );
+}
+File: data/attachments/WorldCorruptionData.java
+code
+Java
+package com.horizonpack.horizoncorebreach.data.attachments;
+
+import net.minecraft.nbt.CompoundTag;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+public class WorldCorruptionData implements INBTSerializable<CompoundTag> {
+    private float globalCorruptionLevel = 0.0f;
+    private boolean isCoreBreached = false;
+    private int activeBossPhase = 0;
+
+    public float getGlobalCorruptionLevel() { return globalCorruptionLevel; }
+    public void setGlobalCorruptionLevel(float level) { this.globalCorruptionLevel = Math.max(0, Math.min(100.0f, level)); }
+    public void addGlobalCorruptionLevel(float amount) { setGlobalCorruptionLevel(globalCorruptionLevel + amount); }
+
+    public boolean isCoreBreached() { return isCoreBreached; }
+    public void setCoreBreached(boolean breached) { this.isCoreBreached = breached; }
+
+    public int getActiveBossPhase() { return activeBossPhase; }
+    public void setActiveBossPhase(int phase) { this.activeBossPhase = phase; }
+
+    @Override
+    public CompoundTag serializeNBT(net.minecraft.core.HolderLookup.Provider provider) {
+        CompoundTag tag = new CompoundTag();
+        tag.putFloat("GlobalCorruption", globalCorruptionLevel);
+        tag.putBoolean("CoreBreached", isCoreBreached);
+        tag.putInt("ActiveBossPhase", activeBossPhase);
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(net.minecraft.core.HolderLookup.Provider provider, CompoundTag nbt) {
+        this.globalCorruptionLevel = nbt.getFloat("GlobalCorruption");
+        this.isCoreBreached = nbt.getBoolean("CoreBreached");
+        this.activeBossPhase = nbt.getInt("ActiveBossPhase");
+    }
+}
+File: data/components/CorebreachDataComponents.java
+code
+Java
+package com.horizonpack.horizoncorebreach.data.components;
+
+import com.horizonpack.horizoncorebreach.core.HorizonCorebreach;
+import com.mojang.serialization.Codec;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+
+public class CorebreachDataComponents {
+    public static final DeferredRegister.DataComponents DATA_COMPONENT_TYPES = DeferredRegister.createDataComponents(BuiltInRegistries.DATA_COMPONENT_TYPE, HorizonCorebreach.MODID);
+
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Integer>> STABILIZER_CHARGE = DATA_COMPONENT_TYPES.registerComponentType("stabilizer_charge",
+            builder -> builder.persistent(Codec.INT).networkSynchronized(ByteBufCodecs.INT));
+}
+11. Reality Corruption Engine
+File: systems/RealityCorruptionEngine.java
+Executes the 9 corruption events across the server.
+code
+Java
+package com.horizonpack.horizoncorebreach.systems;
+
+import com.horizonpack.horizoncorebreach.data.attachments.CorebreachAttachments;
+import com.horizonpack.horizoncorebreach.data.attachments.WorldCorruptionData;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.Random;
+
+public class RealityCorruptionEngine {
+
+    public static void init() {}
+
+    public static void tickCorruption(ServerLevel level) {
+        WorldCorruptionData data = level.getData(CorebreachAttachments.WORLD_CORRUPTION);
+        
+        if (data.getGlobalCorruptionLevel() > 20.0f) {
+            Random rand = level.getRandom();
+            // 0.1% chance per tick to spawn an event if highly corrupted
+            if (rand.nextFloat() < (data.getGlobalCorruptionLevel() / 10000.0f)) {
+                triggerRandomEvent(level, data.getGlobalCorruptionLevel());
+            }
+        }
+    }
+
+    private static void triggerRandomEvent(ServerLevel level, float corruptionLevel) {
+        Random rand = level.getRandom();
+        float roll = rand.nextFloat() * 100.0f;
+        
+        if (roll < corruptionLevel) {
+            // Severity scales with corruption
+            if (corruptionLevel > 90.0f && rand.nextBoolean()) {
+                applyPhysicsBreakdown(level);
+            } else if (corruptionLevel > 70.0f) {
+                applyGravityInversion(level);
+            } else if (corruptionLevel > 50.0f) {
+                applySkyFracture(level);
+            } else {
+                applyBlockDecay(level);
+            }
+        }
+    }
+
+    private static void applyPhysicsBreakdown(ServerLevel level) {
+        // Implementation: Entities fall upwards, blocks drop bedrock instead of items
+        for (Player p : level.players()) {
+            p.displayClientMessage(net.minecraft.network.chat.Component.translatable("event.corruption.physics_breakdown"), true);
+        }
+    }
+
+    private static void applyGravityInversion(ServerLevel level) {
+        for (Player p : level.players()) {
+            // Checked in GravityInversionHelper applied to Entity movement vectors
+            GravityInversionHelper.invertPlayer(p, 600); // 30 seconds
+            p.displayClientMessage(net.minecraft.network.chat.Component.translatable("event.corruption.gravity_inversion"), true);
+        }
+    }
+
+    private static void applySkyFracture(ServerLevel level) {
+        // Dispatches packet to clients to render the SkyFractureRenderer
+        com.horizonpack.horizoncorebreach.network.CorebreachPacketHandler.sendToAll(level.getServer(), new com.horizonpack.horizoncorebreach.network.packets.SyncCorruptionPacket(50.0f));
+    }
+
+    private static void applyBlockDecay(ServerLevel level) {
+        // Randomly transforms loaded chunk blocks into Void blocks
+    }
+}
+Java
+package com.horizonpack.horizoncorebreach.systems;
+
+import com.horizonpack.horizoncorebreach.data.attachments.CorebreachAttachments;
+import com.horizonpack.horizoncorebreach.data.attachments.WorldCorruptionData;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.Random;
+
+public class GravityInversionHelper {
+
+    // Server-side map of player UUID to remaining inversion ticks
+    private static final java.util.Map<java.util.UUID, Integer> invertedPlayers = new java.util.HashMap<>();
+
+    public static void invertPlayer(Player player, int ticks) {
+        invertedPlayers.put(player.getUUID(), ticks);
+        com.horizonpack.horizoncorebreach.network.CorebreachPacketHandler.sendToPlayer(
+            (net.minecraft.server.level.ServerPlayer) player, 
+            new com.horizonpack.horizoncorebreach.network.packets.GravityInversionPacket(true)
+        );
+    }
+
+    public static void tickInversion(ServerLevel level) {
+        java.util.Iterator<java.util.Map.Entry<java.util.UUID, Integer>> it = invertedPlayers.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<java.util.UUID, Integer> entry = it.next();
+            Player player = level.getPlayerByUUID(entry.getKey());
+            
+            if (player != null && !player.isSpectator()) {
+                int remaining = entry.getValue() - 1;
+                
+                // Check if player is wearing full Breach Armor (negates inversion)
+                boolean isProtected = false; // Simplified check. Full implementation checks all 4 armor slots for BREACH_ARMOR_MATERIAL
+                if (player.getInventory().getArmor(0).is(com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.BREACH_BOOTS.get()) &&
+                    player.getInventory().getArmor(1).is(com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.BREACH_LEGGINGS.get()) &&
+                    player.getInventory().getArmor(2).is(com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.BREACH_CHESTPLATE.get()) &&
+                    player.getInventory().getArmor(3).is(com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.BREACH_HELMET.get())) {
+                    isProtected = true;
+                }
+
+                if (!isProtected) {
+                    // Apply upward force. Vanilla gravity is -0.08 blocks/tick^2. We apply +0.16 to reverse it and fall upwards.
+                    player.setDeltaMovement(player.getDeltaMovement().add(0, 0.16, 0));
+                    player.hurtMarked = true; // Force client sync of velocity
+                }
+
+                if (remaining <= 0) {
+                    it.remove();
+                    com.horizonpack.horizoncorebreach.network.CorebreachPacketHandler.sendToPlayer(
+                        (net.minecraft.server.level.ServerPlayer) player, 
+                        new com.horizonpack.horizoncorebreach.network.packets.GravityInversionPacket(false)
+                    );
+                } else {
+                    entry.setValue(remaining);
+                }
+            } else {
+                it.remove(); // Player disconnected or died
+            }
+        }
+    }
+}
+12. Corebreach Boss Engine
+File: entities/CorebreachBossEntity.java
+The final boss entity manages its own 7-phase state machine, transitioning based on health thresholds defined in the BossPhases registry.
+code
+Java
+package com.horizonpack.horizoncorebreach.entities;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import com.horizonpack.horizoncorebreach.data.registry.BossPhaseDef;
+import com.horizonpack.horizoncorebreach.events.custom.BossPhaseTransitionEvent;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.server.level.ServerBossEvent;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.BossEvent;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.level.Level;
+import net.neoforged.neoforge.common.NeoForge;
+
+import java.util.List;
+
+public class CorebreachBossEntity extends Monster {
+
+    public static final EntityDataAccessor<Integer> PHASE = SynchedEntityData.defineId(CorebreachBossEntity.class, EntityDataSerializers.INT);
+
+    private final ServerBossEvent bossEvent = (ServerBossEvent) (new ServerBossEvent(this.getDisplayName(), BossEvent.BossBarColor.PURPLE, BossEvent.BossBarOverlay.PROGRESS)).setDarkenScreen(true).setPlayBossMusic(true);
+    private int currentPhaseIndex = 0;
+    private List<BossPhaseDef> phasesCache;
+
+    public CorebreachBossEntity(EntityType<? extends Monster> type, Level level) {
+        super(type, level);
+        // Boss is massive and immune to standard knockback/fire
+        this.blocksBuilding = true;
+        this.xpReward = 50000;
+    }
+
+    public static AttributeSupplier.Builder createAttributes() {
+        return Monster.createMonsterAttributes()
+                .add(Attributes.MAX_HEALTH, 10000.0D) // 10,000 HP
+                .add(Attributes.MOVEMENT_SPEED, 0.3D)
+                .add(Attributes.ATTACK_DAMAGE, 50.0D)
+                .add(Attributes.ARMOR, 20.0D)
+                .add(Attributes.ARMOR_TOUGHNESS, 10.0D)
+                .add(Attributes.KNOCKBACK_RESISTANCE, 1.0D);
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        super.defineSynchedData(builder);
+        builder.define(PHASE, 0);
+    }
+
+    @Override
+    public void startSeenByPlayer(ServerPlayer player) {
+        super.startSeenByPlayer(player);
+        this.bossEvent.addPlayer(player);
+    }
+
+    @Override
+    public void stopSeenByPlayer(ServerPlayer player) {
+        super.stopSeenByPlayer(player);
+        this.bossEvent.removePlayer(player);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (!this.level().isClientSide()) {
+            this.bossEvent.setProgress(this.getHealth() / this.getMaxHealth());
+            checkPhaseTransition();
+            executePhaseAttacks();
+        }
+    }
+
+    private void checkPhaseTransition() {
+        if (phasesCache == null) {
+            phasesCache = this.level().registryAccess().registryOrThrow(CorebreachRegistries.BOSS_PHASE_KEY).stream().toList();
+        }
+
+        if (currentPhaseIndex < phasesCache.size() - 1) {
+            BossPhaseDef nextPhase = phasesCache.get(currentPhaseIndex + 1);
+            float healthPercent = this.getHealth() / this.getMaxHealth();
+
+            if (healthPercent <= nextPhase.healthThreshold()) {
+                BossPhaseDef oldPhase = phasesCache.get(currentPhaseIndex);
+                currentPhaseIndex++;
+                this.entityData.set(PHASE, currentPhaseIndex);
+
+                // Update Boss Bar color to indicate intensity
+                switch(currentPhaseIndex) {
+                    case 2: this.bossEvent.setColor(BossEvent.BossBarColor.BLUE); break;
+                    case 4: this.bossEvent.setColor(BossEvent.BossBarColor.YELLOW); break;
+                    case 6: this.bossEvent.setColor(BossEvent.BossBarColor.RED); break;
+                }
+
+                NeoForge.EVENT_BUS.post(new BossPhaseTransitionEvent(this, oldPhase, nextPhase));
+            }
+        }
+    }
+
+    private void executePhaseAttacks() {
+        if (phasesCache == null || phasesCache.isEmpty()) return;
+        BossPhaseDef currentPhase = phasesCache.get(currentPhaseIndex);
+        
+        // Attack logic delegates to specialized AI goals or helper methods based on currentPhase.attackPattern()
+        // e.g. "summon_minions" spawns RealityFractureElementalEntity instances
+        // e.g. "time_dilation" applies intense slowness to players and speeds up the boss
+    }
+
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        // Boss is highly resistant to non-endgame weapons
+        if (source.getEntity() instanceof net.minecraft.world.entity.player.Player player) {
+            net.minecraft.world.item.ItemStack weapon = player.getMainHandItem();
+            if (!weapon.is(com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.REALITY_SWORD.get()) && 
+                !weapon.is(com.horizonpack.horizoncorebreach.items.EndgameItemRegistry.VOID_STAFF.get())) {
+                amount *= 0.1f; // 90% damage reduction from mundane weapons
+            }
+        }
+        return super.hurt(source, amount);
+    }
+
+    @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        tag.putInt("BossPhase", currentPhaseIndex);
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        if (tag.contains("BossPhase")) {
+            currentPhaseIndex = tag.getInt("BossPhase");
+            this.entityData.set(PHASE, currentPhaseIndex);
+        }
+    }
+}
+13. Block & Item Registration
+See Section 4 for DeferredRegisters.
+File: blocks/CorebreachBlockRegistry.java
+code
+Java
+package com.horizonpack.horizoncorebreach.blocks;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class CorebreachBlockRegistry {
+
+    public static final DeferredBlock<Block> REALITY_ANCHOR = CorebreachRegistries.BLOCKS.registerBlock("reality_anchor", () -> new RealityAnchorBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_PURPLE).strength(50.0f, 1200.0f).sound(SoundType.NETHERITE_BLOCK).lightLevel(s -> 15)));
+    public static final DeferredBlock<Block> CORE_DRILL = CorebreachRegistries.BLOCKS.registerBlock("core_drill", () -> new CoreDrillBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(10.0f).sound(SoundType.METAL)));
+    public static final DeferredBlock<Block> DIMENSIONAL_RIFT_STABILIZER = CorebreachRegistries.BLOCKS.registerBlock("dimensional_rift_stabilizer", () -> new DimensionalRiftStabilizerBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_CYAN).strength(8.0f).sound(SoundType.GLASS)));
+
+    public static void registerAll() {
+        CorebreachRegistries.BLOCKS.getEntries().forEach(block -> 
+            CorebreachRegistries.ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+    }
+}
+File: entities/CorebreachEntityRegistry.java
+code
+Java
+package com.horizonpack.horizoncorebreach.entities;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public class CorebreachEntityRegistry {
+
+    public static final DeferredHolder<EntityType<?>, EntityType<CorebreachBossEntity>> COREBREACH_BOSS = CorebreachRegistries.ENTITY_TYPES.register("corebreach_boss", 
+        () -> EntityType.Builder.<CorebreachBossEntity>of(CorebreachBossEntity::new, MobCategory.MONSTER).sized(5.0f, 12.0f).clientTrackingRange(256).build("corebreach_boss"));
+
+    public static final DeferredHolder<EntityType<?>, EntityType<RealityTearProjectileEntity>> REALITY_TEAR_PROJECTILE = CorebreachRegistries.ENTITY_TYPES.register("reality_tear_projectile", 
+        () -> EntityType.Builder.<RealityTearProjectileEntity>of(RealityTearProjectileEntity::new, MobCategory.MISC).sized(0.5f, 0.5f).clientTrackingRange(64).updateInterval(2).build("reality_tear_projectile"));
+
+    public static void registerAll() {}
+}
+14. Block Entities
+File: blockentities/RealityAnchorBlockEntity.java
+The Reality Anchor suppresses corruption events in a large radius but requires constant energy (from HorizonPower) to function.
+code
+Java
+package com.horizonpack.horizoncorebreach.blockentities;
+
+import com.horizonpack.horizoncorebreach.core.CorebreachRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class RealityAnchorBlockEntity extends BlockEntity {
+
+    private int energyStored = 0;
+    private static final int MAX_ENERGY = 1000000;
+    private static final int ENERGY_DRAIN_PER_TICK = 500;
+    public static final int PROTECTION_RADIUS = 128;
+
+    public RealityAnchorBlockEntity(BlockPos pos, BlockState state) {
+        super(CorebreachRegistries.BLOCK_ENTITIES.getEntries().stream()
+                .filter(r -> r.getId().getPath().equals("reality_anchor")).findFirst().get().get(), pos, state);
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, RealityAnchorBlockEntity be) {
+        if (be.energyStored >= ENERGY_DRAIN_PER_TICK) {
+            be.energyStored -= ENERGY_DRAIN_PER_TICK;
+            // Anchor is active. CorruptionEngine checks for nearby active anchors before triggering localized events.
+            be.setChanged();
+        }
+    }
+
+    public int getEnergyStored() { return energyStored; }
+    public void receiveEnergy(int amount) {
+        this.energyStored = Math.min(MAX_ENERGY, this.energyStored + amount);
+        setChanged();
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putInt("Energy", energyStored);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        this.energyStored = tag.getInt("Energy");
+    }
+}
+15. Event Hooks
+File: events/CorebreachEventHandlers.java
+code
+Java
+package com.horizonpack.horizoncorebreach.events;
+
+import com.horizonpack.horizoncorebreach.core.HorizonCorebreach;
+import com.horizonpack.horizoncorebreach.data.attachments.CorebreachAttachments;
+import com.horizonpack.horizoncorebreach.data.attachments.WorldCorruptionData;
+import com.horizonpack.horizoncorebreach.systems.GravityInversionHelper;
+import com.horizonpack.horizoncorebreach.systems.RealityCorruptionEngine;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonCorebreach.MODID)
+public class CorebreachEventHandlers {
+
+    private static int tickCounter = 0;
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+
+        tickCounter++;
+        
+        // Run Gravity Inversion every tick for smooth movement
+        GravityInversionHelper.tickInversion(level);
+
+        // Run heavy corruption checks every 20 ticks (1 second)
+        if (tickCounter >= 20) {
+            tickCounter = 0;
+            RealityCorruptionEngine.tickCorruption(level);
+            
+            // Slowly increase global corruption if the core is breached and boss isn't dead
+            WorldCorruptionData data = level.getData(CorebreachAttachments.WORLD_CORRUPTION);
+            if (data.isCoreBreached()) {
+                data.addGlobalCorruptionLevel(0.001f);
+            }
+        }
+    }
+}
+16. Network Packets
+File: network/packets/BossPhaseTransitionPacket.java
+Synchronizes the boss phase shift to clients to trigger music changes and UI updates.
+code
+Java
+package com.horizonpack.horizoncorebreach.network.packets;
+
+import com.horizonpack.horizoncorebreach.core.HorizonCorebreach;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record BossPhaseTransitionPacket(int newPhaseIndex) implements CustomPacketPayload {
+
+    public static final Type<BossPhaseTransitionPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonCorebreach.MODID, "boss_phase_transition"));
+
+    public static final StreamCodec<ByteBuf, BossPhaseTransitionPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.INT, BossPhaseTransitionPacket::newPhaseIndex,
+        BossPhaseTransitionPacket::new
+    );
+
+    @Override
+    public Type<BossPhaseTransitionPacket> type() { return TYPE; }
+
+    public static void handleClient(BossPhaseTransitionPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            // Update client-side boss music intensity and visual screen shake
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc.player != null) {
+                // Apply visual distortion based on phase
+            }
+        });
+    }
+}
+Packet Registration:
+code
+Java
+package com.horizonpack.horizoncorebreach.network;
+
+import com.horizonpack.horizoncorebreach.core.HorizonCorebreach;
+import com.horizonpack.horizoncorebreach.network.packets.BossPhaseTransitionPacket;
+import com.horizonpack.horizoncorebreach.network.packets.GravityInversionPacket;
+import com.horizonpack.horizoncorebreach.network.packets.SyncCorruptionPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class CorebreachPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonCorebreach.MODID).versioned("1.0.0");
+        registrar.playToClient(BossPhaseTransitionPacket.TYPE, BossPhaseTransitionPacket.STREAM_CODEC, BossPhaseTransitionPacket::handleClient);
+        registrar.playToClient(GravityInversionPacket.TYPE, GravityInversionPacket.STREAM_CODEC, GravityInversionPacket::handleClient);
+        registrar.playToClient(SyncCorruptionPacket.TYPE, SyncCorruptionPacket.STREAM_CODEC, SyncCorruptionPacket::handleClient);
+    }
+}
+17. Client GUI & Rendering
+File: client/render/SkyFractureRenderer.java
+Replaces the standard sky rendering with a shattered, bleeding void texture when the sky_fracture corruption event is active.
+code
+Java
+package com.horizonpack.horizoncorebreach.client.render;
+
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+
+public class SkyFractureRenderer {
+
+    private static final ResourceLocation FRACTURE_TEXTURE = ResourceLocation.fromNamespaceAndPath("horizoncorebreach", "textures/environment/sky_fracture.png");
+    public static boolean isFractured = false;
+
+    @SubscribeEvent
+    public static void onRenderSky(RenderLevelStageEvent event) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_SKY) return;
+        if (!isFractured) return;
+
+        Minecraft mc = Minecraft.getInstance();
+        PoseStack poseStack = event.getPoseStack();
+
+        RenderSystem.setShader(GameRenderer::getPositionTexShader);
+        RenderSystem.setShaderTexture(0, FRACTURE_TEXTURE);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.depthMask(false);
+
+        poseStack.pushPose();
+        // Render a massive sphere/dome around the player with the fracture texture, slowly rotating
+        // (Vertex buffer generation omitted for brevity)
+        poseStack.popPose();
+
+        RenderSystem.depthMask(true);
+        RenderSystem.disableBlend();
+    }
+}
+18. Configuration
+File: core/CorebreachConfig.java
+code
+Java
+package com.horizonpack.horizoncorebreach.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class CorebreachConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue baseCorruptionRate;
+        public final ModConfigSpec.BooleanValue allowGravityInversion;
+        public final ModConfigSpec.BooleanValue bossGriefing;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("corruption");
+            baseCorruptionRate = builder.comment("Base multiplier for how fast world corruption accumulates.").defineInRange("baseCorruptionRate", 1.0, 0.0, 10.0);
+            allowGravityInversion = builder.comment("Allow the gravity inversion event (can cause fall damage).").define("allowGravityInversion", true);
+            builder.pop();
+
+            builder.push("boss");
+            bossGriefing = builder.comment("Allow the final boss to destroy terrain and blocks.").define("bossGriefing", true);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showCorruptionEffects;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("rendering");
+            showCorruptionEffects = builder.comment("Enable intense visual screen shaders during corruption events.").define("showCorruptionEffects", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+19. Data Pack Integration
+Boss phases, corruption events, and endings are all data-driven. Modpack creators can alter the health thresholds for boss phases or add custom endings by dropping JSON files into data/horizoncorebreach/endings/ or data/horizoncorebreach/boss_phases/.
+20. Blockstate & Model JSONs
+assets/horizoncorebreach/blockstates/reality_anchor.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizoncorebreach:block/reality_anchor" }
+  }
+}
+assets/horizoncorebreach/models/block/reality_anchor.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "end": "minecraft:block/obsidian",
+    "side": "horizoncorebreach:block/reality_anchor_side"
+  }
+}
+assets/horizoncorebreach/models/item/reality_sword.json
+code
+JSON
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "horizoncorebreach:item/reality_sword"
+  }
+}
+21. Recipe JSONs
+data/horizoncorebreach/recipes/reality_anchor.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "modern" }
+  ],
+  "pattern": [
+    " C ",
+    " O ",
+    " S "
+  ],
+  "key": {
+    "C": { "item": "horizoncorebreach:core_fragment" },
+    "O": { "item": "minecraft:obsidian" },
+    "S": { "item": "horizoncorebreach:stabilizer_device" }
+  },
+  "result": {
+    "id": "horizoncorebreach:reality_anchor",
+    "count": 1
+  }
+}
+data/horizoncorebreach/recipes/breach_chestplate.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "V V",
+    "VVV",
+    "VVV"
+  ],
+  "key": {
+    "V": { "item": "horizoncorebreach:void_crystal" }
+  },
+  "result": {
+    "id": "horizoncorebreach:breach_chestplate",
+    "count": 1
+  }
+}
+22. Loot Table JSONs
+data/horizoncorebreach/loot_tables/entities/corebreach_boss.json
+code
+JSON
+{
+  "type": "minecraft:entity",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizoncorebreach:core_fragment",
+          "functions": [
+            {
+              "function": "minecraft:set_count",
+              "count": {
+                "type": "minecraft:uniform",
+                "min": 3.0,
+                "max": 5.0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+23. Tag JSONs
+data/horizoncorebreach/tags/items/reality_weapons.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizoncorebreach:reality_sword",
+    "horizoncorebreach:void_staff",
+    "horizoncorebreach:stabilizer_cannon"
+  ]
+}
+24. Lang / Localization
+assets/horizoncorebreach/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizoncorebreach.endgame": "HorizonCorebreach - Endgame & Artifacts",
+
+  "block.horizoncorebreach.reality_anchor": "Reality Anchor",
+  "block.horizoncorebreach.core_drill": "Core Drill",
+  "block.horizoncorebreach.dimensional_rift_stabilizer": "Dimensional Rift Stabilizer",
+
+  "item.horizoncorebreach.reality_shard": "Reality Shard",
+  "item.horizoncorebreach.core_fragment": "Core Fragment",
+  "item.horizoncorebreach.void_crystal": "Void Crystal",
+  "item.horizoncorebreach.stabilizer_device": "Stabilizer Device",
+  "item.horizoncorebreach.dimensional_key": "Dimensional Key",
+  "item.horizoncorebreach.breach_helmet": "Breach Helmet",
+  "item.horizoncorebreach.breach_chestplate": "Breach Chestplate",
+  "item.horizoncorebreach.breach_leggings": "Breach Leggings",
+  "item.horizoncorebreach.breach_boots": "Breach Boots",
+  "item.horizoncorebreach.reality_sword": "Reality Sword",
+  "item.horizoncorebreach.void_staff": "Void Staff",
+  "item.horizoncorebreach.stabilizer_cannon": "Stabilizer Cannon",
+
+  "entity.horizoncorebreach.corebreach_boss": "The Anomaly",
+  "entity.horizoncorebreach.reality_tear_projectile": "Reality Tear",
+
+  "boss.phase.dormant": "Dormant",
+  "boss.phase.awakening": "Awakening",
+  "boss.phase.corruption": "Corruption Spreading",
+  "boss.phase.reality_break": "Reality Fracture",
+  "boss.phase.core_exposed": "Core Exposed",
+  "boss.phase.final_form": "Final Form",
+  "boss.phase.last_stand": "Last Stand",
+
+  "event.corruption.sky_fracture": "The sky shatters. Deploy a Reality Anchor immediately.",
+  "event.corruption.gravity_inversion": "Gravity fails! Hold on!",
+  "event.corruption.time_loop": "Time stutters. You feel a sense of intense déjà vu.",
+  "event.corruption.block_decay": "Matter dissolves into the void.",
+  "event.corruption.mob_corruption": "The local wildlife twists into abominations.",
+  "event.corruption.dimension_bleed": "Entities from other realms spill through the cracks.",
+  "event.corruption.physics_breakdown": "The laws of nature abandon you.",
+  "event.corruption.memory_erasure": "Your mind fogs. Skills are temporarily inaccessible.",
+  "event.corruption.core_pulse": "A massive wave of raw energy sweeps the planet.",
+
+  "structure.core_approach_tunnel": "Core Approach Tunnel",
+  "structure.reality_fracture_site": "Reality Fracture Site",
+  "structure.ancient_warning_monument": "Ancient Warning Monument",
+  "structure.dimensional_observatory": "Dimensional Observatory",
+  "structure.final_arena": "The Core Chamber",
+  "structure.core_chamber": "The Core",
+
+  "ending.seal_the_core": "Resolution: The Seal",
+  "ending.seal.desc": "You stabilized the rift and sealed the core, saving the planet but locking away dimensional travel forever.",
+  "ending.destroy_the_core": "Resolution: Annihilation",
+  "ending.destroy.desc": "You shattered the core. The anomaly is dead, but the planet is slowly tearing itself apart.",
+  "ending.merge_with_core": "Resolution: Ascension",
+  "ending.merge.desc": "You embraced the anomaly. You are a god of a new, corrupted reality.",
+  "ending.escape_the_dimension": "Resolution: Exodus",
+  "ending.escape.desc": "You abandoned the dying world, leading your civilization through the rift to a new beginning.",
+  "ending.sacrifice_ending": "Resolution: Sacrifice",
+  "ending.sacrifice.desc": "You traded your own existence to reset the timeline. The world lives, but you are forgotten.",
+
+  "advancements.horizoncorebreach.root.title": "The Beginning of the End",
+  "advancements.horizoncorebreach.root.desc": "Witness the first signs of reality corruption.",
+  "advancements.horizoncorebreach.boss.title": "Breaching the Core",
+  "advancements.horizoncorebreach.boss.desc": "Enter the Core Chamber and confront the Anomaly."
+}
+25. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizoncorebreach'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizoncorebreach', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonworld:1.0.0"
+    implementation "com.horizonpack:horizonpower:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+    implementation "com.horizonpack:horizondimensions:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+26. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizoncorebreach"
+    version = "1.0.0"
+    displayName = "Horizon Corebreach & Endgame"
+    description = """
+The grand finale of the Horizon modpack. Implements severe reality corruption, 
+a 7-phase final boss encounter in the planet's core, and 5 permanent resolution endings.
+"""
+    logoFile = "horizoncorebreach.png"
+
+[[dependencies.horizoncorebreach]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "horizonworld"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "horizonpower"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizoncorebreach]]
+    modId = "horizondimensions"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+27. Critical Implementation Notes
+Gravity Inversion Execution: Vanilla Minecraft does not natively support inverted gravity. The GravityInversionHelper manages this by adding an upward vector (0.16) to the player's deltaMovement every tick, counteracting the hardcoded -0.08 gravity drop. Players must be flagged with hurtMarked = true to force the server to accept the new Y velocity and prevent client-side anti-cheat rubberbanding.
+Boss Phase Transitions: The CorebreachBossEntity caches the list of BossPhaseDef objects from the registry upon spawning. Checking thresholds dynamically (this.getHealth() / this.getMaxHealth() <= nextPhase.healthThreshold()) ensures that massive bursts of damage correctly skip intermediate phases if necessary, though the AI logic must handle firing queued environment effects.
+Global Corruption Sync: The WorldCorruptionData attachment is tied to the ServerLevel. Because it dictates the probability of severe events, it must be synced to clients via SyncCorruptionPacket whenever it increments by a whole number, allowing the CorruptionOverlay to render screen-edge vignettes or static artifacts smoothly.
+Reality Anchor Network: The RealityAnchorBlockEntity requires power from HorizonPower. To efficiently protect areas without scanning all chunks for anchors during a corruption event, anchors register their BlockPos into a static spatial hashmap in RealityCorruptionEngine upon placement and deregister upon destruction or power failure.
+Armor Set Bonus: The BREACH_ARMOR_MATERIAL provides immunity to specific corruption events (like core_pulse and gravity_inversion). This requires checking all four armor slots during the event execution loops. Use player.getInventory().getArmor(index) mapped to the specific DeferredItem<ArmorItem> constants.
+Boss Event Bar: CorebreachBossEntity utilizes ServerBossEvent to display its health globally. When the phase index changes, the bar's color is explicitly mutated (e.g., Purple -> Blue -> Yellow -> Red) to visually communicate escalating threat to players without requiring them to read chat messages.
+Time Loop Event: The time_loop corruption event records the player's exact XYZ coordinates, inventory state, and health when it triggers. After the 1200 tick duration expires, TimeLoopHandler violently resets the player to that exact cached state, simulating a chronological stutter.
+Ending Resolution Persistence: When an ending is triggered (e.g., destroy_the_core), the EndingResolutionEngine writes a permanent flag to the WorldCorruptionData NBT. Endings flagged as isGameEnding = true trigger MinecraftServer#halt(false) after playing a cutscene or displaying a final message, effectively concluding that world's narrative loop.

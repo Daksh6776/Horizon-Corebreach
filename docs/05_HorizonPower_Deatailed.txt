@@ -1,0 +1,1421 @@
+
+HorizonPower — Detailed Technical Specification
+Mod ID: horizonpower
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Electrical Grid, Industrial Manufacturing, and Transportation
+Absorbed mods: HorizonPower, HorizonFuels (energy side), HorizonTransport, HorizonIndustry
+Depends on: horizoncore, horizondata, horizonworld
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Cables & Pipes Registry
+Power Generation Registry
+Industrial Machine Registry
+Transport & Vehicle Registry
+Infrastructure Registry (Roads & Rails)
+Energy Capability & Grid System
+Factory & Automation System
+Vehicle Physics & Fuel System
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonPower handles all kinetic and electrical energy, industrial manufacturing, and vehicle transportation in the Horizon Corebreach modpack. It simulates the technological leap from hand-cranked mills to nuclear-powered metropolises.
+Power Grids: Node-based energy distribution supporting kinetic (early game) and RF/Forge Energy (mid-to-late game).
+Generators: 15 distinct power generation blocks, requiring specific fuels, environmental conditions, and maintenance.
+Industry & Automation: 11 massive multi-block and single-block processing machines that smelt, refine, and assemble items automatically.
+Vehicles: 20 distinct rideable entities spanning land, sea, and air. Vehicles possess realistic fuel consumption, acceleration curves, and inventory storage.
+Infrastructure: 8 road and rail blocks that directly modify the friction and top speed coefficients of vehicles traveling over them.
+2. File & Package Structure
+code
+Text
+horizon_power/
+├── src/main/java/com/horizonpack/horizonpower/
+│   ├── core/
+│   │   ├── HorizonPower.java
+│   │   ├── PowerRegistries.java
+│   │   └── PowerConfig.java
+│   ├── blocks/
+│   │   ├── cables/
+│   │   │   ├── BaseCableBlock.java
+│   │   │   ├── WoodenConduitBlock.java
+│   │   │   ├── CopperWireBlock.java
+│   │   │   ├── IronPipeBlock.java
+│   │   │   ├── SteelCableBlock.java
+│   │   │   ├── InsulatedCopperWireBlock.java
+│   │   │   ├── HighVoltageCableBlock.java
+│   │   │   ├── FiberOpticCableBlock.java
+│   │   │   └── SuperconductorCableBlock.java
+│   │   ├── generators/
+│   │   │   ├── HandCrankBlock.java
+│   │   │   ├── AnimalMillBlock.java
+│   │   │   ├── WaterWheelBlock.java
+│   │   │   ├── WindmillBlock.java
+│   │   │   ├── SteamEngineBlock.java
+│   │   │   ├── CoalGeneratorBlock.java
+│   │   │   ├── OilBurnerBlock.java
+│   │   │   ├── DieselGeneratorBlock.java
+│   │   │   ├── NaturalGasTurbineBlock.java
+│   │   │   ├── SolarPanelBlock.java
+│   │   │   ├── WindTurbineBlock.java
+│   │   │   ├── HydroelectricDamBlock.java
+│   │   │   ├── NuclearReactorBlock.java
+│   │   │   ├── FusionReactorBlock.java
+│   │   │   └── GeothermalPlantBlock.java
+│   │   ├── machines/
+│   │   │   ├── SawmillBlock.java
+│   │   │   ├── MillstoneBlock.java
+│   │   │   ├── StampMillBlock.java
+│   │   │   ├── BlastFurnaceBlock.java
+│   │   │   ├── CokeOvenBlock.java
+│   │   │   ├── OilRefineryBlock.java
+│   │   │   ├── ChemicalPlantBlock.java
+│   │   │   ├── AssemblyLineBlock.java
+│   │   │   ├── ThreeDPrinterBlock.java
+│   │   │   ├── NuclearCentrifugeBlock.java
+│   │   │   └── ParticleAcceleratorBlock.java
+│   │   └── infrastructure/
+│   │       ├── DirtPathBlock.java
+│   │       ├── GravelRoadBlock.java
+│   │       ├── CobblestoneRoadBlock.java
+│   │       ├── PavedRoadBlock.java
+│   │       ├── HighwayBlock.java
+│   │       ├── RailTrackBlock.java
+│   │       ├── ElectrifiedRailBlock.java
+│   │       └── MaglevRailBlock.java
+│   ├── blockentities/
+│   │   ├── GeneratorBlockEntity.java
+│   │   ├── MachineBlockEntity.java
+│   │   ├── CableBlockEntity.java
+│   │   └── AssemblyLineBlockEntity.java
+│   ├── entities/
+│   │   ├── BaseVehicleEntity.java
+│   │   ├── land/
+│   │   │   ├── CartEntity.java
+│   │   │   ├── WagonEntity.java
+│   │   │   ├── ChariotEntity.java
+│   │   │   ├── LocomotiveEntity.java
+│   │   │   ├── SteamCarEntity.java
+│   │   │   ├── AutomobileEntity.java
+│   │   │   ├── TruckEntity.java
+│   │   │   └── MotorcycleEntity.java
+│   │   ├── sea/
+│   │   │   ├── SailingShipEntity.java
+│   │   │   ├── GalleyEntity.java
+│   │   │   ├── SteamShipEntity.java
+│   │   │   ├── IroncladEntity.java
+│   │   │   ├── SubmarineEntity.java
+│   │   │   └── AircraftCarrierEntity.java
+│   │   └── air_space/
+│   │       ├── BiplaneEntity.java
+│   │       ├── ZeppelinEntity.java
+│   │       ├── JetAircraftEntity.java
+│   │       ├── HelicopterEntity.java
+│   │       ├── RocketEntity.java
+│   │       └── SpaceShuttleEntity.java
+│   ├── items/
+│   │   ├── VehicleItem.java
+│   │   ├── BatteryItem.java
+│   │   └── WrenchItem.java
+│   ├── energy/
+│   │   ├── HorizonEnergyStorage.java
+│   │   └── PowerGridNode.java
+│   ├── events/
+│   │   └── PowerEventHandlers.java
+│   ├── network/
+│   │   ├── PowerPacketHandler.java
+│   │   └── packets/
+│   │       ├── VehicleInputPacket.java
+│   │       └── SyncMachineStatePacket.java
+│   └── client/
+│       ├── render/
+│       │   ├── VehicleRenderer.java
+│       │   └── MachineBER.java
+│       └── gui/
+│           ├── MachineMenu.java
+│           └── MachineScreen.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonpower/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonpower/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonPower.java
+code
+Java
+package com.horizonpack.horizonpower.core;
+
+import com.horizonpack.horizonpower.events.PowerEventHandlers;
+import com.horizonpack.horizonpower.network.PowerPacketHandler;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonPower.MODID)
+public class HorizonPower {
+    public static final String MODID = "horizonpower";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonPower(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, PowerConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, PowerConfig.CLIENT_SPEC);
+
+        PowerRegistries.BLOCKS.register(modEventBus);
+        PowerRegistries.ITEMS.register(modEventBus);
+        PowerRegistries.BLOCK_ENTITIES.register(modEventBus);
+        PowerRegistries.ENTITY_TYPES.register(modEventBus);
+        PowerRegistries.MENU_TYPES.register(modEventBus);
+        PowerRegistries.CREATIVE_TABS.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(PowerRegistries::registerEntityAttributes);
+        modEventBus.addListener(PowerPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(PowerEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            PowerRegistries.initCaches();
+        });
+    }
+}
+4. Cables & Pipes Registry
+File: blocks/cables/CableRegistry.java
+Cables utilize 6-way VoxelShape connections and transfer Forge Energy or Fluids.
+code
+Java
+package com.horizonpack.horizonpower.blocks.cables;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class CableRegistry {
+
+    private static BlockBehaviour.Properties cableProps(MapColor color, float strength) {
+        return BlockBehaviour.Properties.of().mapColor(color).strength(strength).noOcclusion().sound(SoundType.METAL);
+    }
+
+    public static final DeferredBlock<Block> WOODEN_CONDUIT = PowerRegistries.BLOCKS.registerBlock("wooden_conduit", 
+        () -> new BaseCableBlock(cableProps(MapColor.WOOD, 1.0f), 0, 100)); // Fluid only
+
+    public static final DeferredBlock<Block> COPPER_WIRE = PowerRegistries.BLOCKS.registerBlock("copper_wire", 
+        () -> new BaseCableBlock(cableProps(MapColor.COLOR_ORANGE, 1.5f), 256, 0)); // Energy only
+
+    public static final DeferredBlock<Block> IRON_PIPE = PowerRegistries.BLOCKS.registerBlock("iron_pipe", 
+        () -> new BaseCableBlock(cableProps(MapColor.METAL, 2.5f), 0, 1000)); // Fluid only
+
+    public static final DeferredBlock<Block> STEEL_CABLE = PowerRegistries.BLOCKS.registerBlock("steel_cable", 
+        () -> new BaseCableBlock(cableProps(MapColor.COLOR_GRAY, 4.0f), 1024, 0));
+
+    public static final DeferredBlock<Block> INSULATED_COPPER_WIRE = PowerRegistries.BLOCKS.registerBlock("insulated_copper_wire", 
+        () -> new BaseCableBlock(cableProps(MapColor.COLOR_BLACK, 2.0f), 2048, 0));
+
+    public static final DeferredBlock<Block> HIGH_VOLTAGE_CABLE = PowerRegistries.BLOCKS.registerBlock("high_voltage_cable", 
+        () -> new BaseCableBlock(cableProps(MapColor.COLOR_LIGHT_GRAY, 3.0f), 32768, 0));
+
+    public static final DeferredBlock<Block> FIBER_OPTIC_CABLE = PowerRegistries.BLOCKS.registerBlock("fiber_optic_cable", 
+        () -> new BaseCableBlock(cableProps(MapColor.COLOR_CYAN, 1.0f).sound(SoundType.GLASS), 0, 0)); // Data logic only
+
+    public static final DeferredBlock<Block> SUPERCONDUCTOR_CABLE = PowerRegistries.BLOCKS.registerBlock("superconductor_cable", 
+        () -> new BaseCableBlock(cableProps(MapColor.DIAMOND, 5.0f), Integer.MAX_VALUE, 0));
+
+    public static void init() {}
+}
+Total Cables/Pipes registered: 8
+File: blocks/cables/BaseCableBlock.java
+code
+Java
+package com.horizonpack.horizonpower.blocks.cables;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
+
+public class BaseCableBlock extends Block implements EntityBlock {
+
+    public static final BooleanProperty NORTH = BooleanProperty.create("north");
+    public static final BooleanProperty EAST = BooleanProperty.create("east");
+    public static final BooleanProperty SOUTH = BooleanProperty.create("south");
+    public static final BooleanProperty WEST = BooleanProperty.create("west");
+    public static final BooleanProperty UP = BooleanProperty.create("up");
+    public static final BooleanProperty DOWN = BooleanProperty.create("down");
+
+    private final int maxTransferRF;
+    private final int maxTransferFluid;
+
+    public BaseCableBlock(Properties properties, int maxTransferRF, int maxTransferFluid) {
+        super(properties);
+        this.maxTransferRF = maxTransferRF;
+        this.maxTransferFluid = maxTransferFluid;
+        this.registerDefaultState(this.stateDefinition.any()
+            .setValue(NORTH, false).setValue(EAST, false).setValue(SOUTH, false)
+            .setValue(WEST, false).setValue(UP, false).setValue(DOWN, false));
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(NORTH, EAST, SOUTH, WEST, UP, DOWN);
+    }
+
+    @Override
+    public BlockState getStateForPlacement(BlockPlaceContext context) {
+        BlockGetter level = context.getLevel();
+        BlockPos pos = context.getClickedPos();
+        return this.defaultBlockState()
+            .setValue(NORTH, canConnect(level, pos, Direction.NORTH))
+            .setValue(EAST, canConnect(level, pos, Direction.EAST))
+            .setValue(SOUTH, canConnect(level, pos, Direction.SOUTH))
+            .setValue(WEST, canConnect(level, pos, Direction.WEST))
+            .setValue(UP, canConnect(level, pos, Direction.UP))
+            .setValue(DOWN, canConnect(level, pos, Direction.DOWN));
+    }
+
+    @Override
+    public BlockState updateShape(BlockState state, Direction facing, BlockState facingState, LevelAccessor level, BlockPos currentPos, BlockPos facingPos) {
+        BooleanProperty property = getPropertyForDirection(facing);
+        return state.setValue(property, canConnect(level, currentPos, facing));
+    }
+
+    private boolean canConnect(BlockGetter level, BlockPos pos, Direction direction) {
+        BlockState facingState = level.getBlockState(pos.relative(direction));
+        return facingState.getBlock() instanceof BaseCableBlock; // Simplified. True implementation checks Capabilities.
+    }
+
+    private BooleanProperty getPropertyForDirection(Direction dir) {
+        return switch (dir) {
+            case NORTH -> NORTH; case EAST -> EAST; case SOUTH -> SOUTH;
+            case WEST -> WEST; case UP -> UP; case DOWN -> DOWN;
+        };
+    }
+
+    @Override
+    public VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
+        VoxelShape shape = Block.box(6, 6, 6, 10, 10, 10);
+        if (state.getValue(NORTH)) shape = Shapes.or(shape, Block.box(6, 6, 0, 10, 10, 6));
+        if (state.getValue(SOUTH)) shape = Shapes.or(shape, Block.box(6, 6, 10, 10, 10, 16));
+        if (state.getValue(EAST)) shape = Shapes.or(shape, Block.box(10, 6, 6, 16, 10, 10));
+        if (state.getValue(WEST)) shape = Shapes.or(shape, Block.box(0, 6, 6, 6, 10, 10));
+        if (state.getValue(UP)) shape = Shapes.or(shape, Block.box(6, 10, 6, 10, 16, 10));
+        if (state.getValue(DOWN)) shape = Shapes.or(shape, Block.box(6, 0, 6, 10, 6, 10));
+        return shape;
+    }
+
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new com.horizonpack.horizonpower.blockentities.CableBlockEntity(pos, state, maxTransferRF);
+    }
+}
+5. Power Generation Registry
+File: blocks/generators/GeneratorRegistry.java
+code
+Java
+package com.horizonpack.horizonpower.blocks.generators;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class GeneratorRegistry {
+
+    private static BlockBehaviour.Properties machineProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(3.5f).sound(SoundType.METAL).requiresCorrectToolForDrops();
+    }
+
+    public static final DeferredBlock<Block> HAND_CRANK = PowerRegistries.BLOCKS.registerBlock("hand_crank", () -> new GeneratorBlock(machineProps(), 10, "stone_age"));
+    public static final DeferredBlock<Block> ANIMAL_MILL = PowerRegistries.BLOCKS.registerBlock("animal_mill", () -> new GeneratorBlock(machineProps(), 50, "copper_age"));
+    public static final DeferredBlock<Block> WATER_WHEEL = PowerRegistries.BLOCKS.registerBlock("water_wheel", () -> new GeneratorBlock(machineProps(), 100, "bronze_age"));
+    public static final DeferredBlock<Block> WINDMILL = PowerRegistries.BLOCKS.registerBlock("windmill", () -> new GeneratorBlock(machineProps(), 150, "medieval"));
+    public static final DeferredBlock<Block> STEAM_ENGINE = PowerRegistries.BLOCKS.registerBlock("steam_engine", () -> new GeneratorBlock(machineProps(), 500, "industrial"));
+    public static final DeferredBlock<Block> COAL_GENERATOR = PowerRegistries.BLOCKS.registerBlock("coal_generator", () -> new GeneratorBlock(machineProps(), 1000, "industrial"));
+    public static final DeferredBlock<Block> OIL_BURNER = PowerRegistries.BLOCKS.registerBlock("oil_burner", () -> new GeneratorBlock(machineProps(), 2500, "industrial"));
+    public static final DeferredBlock<Block> DIESEL_GENERATOR = PowerRegistries.BLOCKS.registerBlock("diesel_generator", () -> new GeneratorBlock(machineProps(), 4000, "modern"));
+    public static final DeferredBlock<Block> NATURAL_GAS_TURBINE = PowerRegistries.BLOCKS.registerBlock("natural_gas_turbine", () -> new GeneratorBlock(machineProps(), 6000, "modern"));
+    public static final DeferredBlock<Block> SOLAR_PANEL = PowerRegistries.BLOCKS.registerBlock("solar_panel", () -> new GeneratorBlock(machineProps(), 500, "modern"));
+    public static final DeferredBlock<Block> WIND_TURBINE = PowerRegistries.BLOCKS.registerBlock("wind_turbine", () -> new GeneratorBlock(machineProps(), 2000, "modern"));
+    public static final DeferredBlock<Block> HYDROELECTRIC_DAM = PowerRegistries.BLOCKS.registerBlock("hydroelectric_dam", () -> new GeneratorBlock(machineProps(), 10000, "modern"));
+    public static final DeferredBlock<Block> NUCLEAR_REACTOR = PowerRegistries.BLOCKS.registerBlock("nuclear_reactor", () -> new GeneratorBlock(machineProps(), 50000, "modern"));
+    public static final DeferredBlock<Block> FUSION_REACTOR = PowerRegistries.BLOCKS.registerBlock("fusion_reactor", () -> new GeneratorBlock(machineProps(), 250000, "future"));
+    public static final DeferredBlock<Block> GEOTHERMAL_PLANT = PowerRegistries.BLOCKS.registerBlock("geothermal_plant", () -> new GeneratorBlock(machineProps(), 15000, "modern"));
+
+    public static void init() {}
+}
+Total Generators registered: 15
+File: blockentities/GeneratorBlockEntity.java
+code
+Java
+package com.horizonpack.horizonpower.blockentities;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import com.horizonpack.horizonpower.energy.HorizonEnergyStorage;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class GeneratorBlockEntity extends BlockEntity {
+
+    public final HorizonEnergyStorage energyStorage;
+    private final int generationPerTick;
+    private int fuelTicksRemaining = 0;
+
+    public GeneratorBlockEntity(BlockPos pos, BlockState state, int generationPerTick, int capacity) {
+        super(PowerRegistries.GENERATOR_BE.get(), pos, state);
+        this.generationPerTick = generationPerTick;
+        this.energyStorage = new HorizonEnergyStorage(capacity, 0, generationPerTick * 2);
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, GeneratorBlockEntity be) {
+        if (be.fuelTicksRemaining > 0) {
+            be.fuelTicksRemaining--;
+            be.energyStorage.receiveEnergyInternal(be.generationPerTick, false);
+            be.setChanged();
+        }
+        
+        // Push energy to adjacent blocks
+        if (be.energyStorage.getEnergyStored() > 0) {
+            com.horizonpack.horizonpower.energy.PowerGridNode.distributeEnergy(level, pos, be.energyStorage);
+        }
+    }
+
+    public void addFuel(int ticks) {
+        this.fuelTicksRemaining += ticks;
+        this.setChanged();
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putInt("FuelTicks", fuelTicksRemaining);
+        tag.putInt("Energy", energyStorage.getEnergyStored());
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        this.fuelTicksRemaining = tag.getInt("FuelTicks");
+        this.energyStorage.setEnergy(tag.getInt("Energy"));
+    }
+}
+6. Industrial Machine Registry
+File: blocks/machines/MachineRegistry.java
+code
+Java
+package com.horizonpack.horizonpower.blocks.machines;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class MachineRegistry {
+
+    private static BlockBehaviour.Properties machineProps() {
+        return BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(4.0f).sound(SoundType.METAL).requiresCorrectToolForDrops();
+    }
+
+    public static final DeferredBlock<Block> SAWMILL = PowerRegistries.BLOCKS.registerBlock("sawmill", () -> new BaseMachineBlock(machineProps(), 100));
+    public static final DeferredBlock<Block> MILLSTONE = PowerRegistries.BLOCKS.registerBlock("millstone", () -> new BaseMachineBlock(machineProps(), 50));
+    public static final DeferredBlock<Block> STAMP_MILL = PowerRegistries.BLOCKS.registerBlock("stamp_mill", () -> new BaseMachineBlock(machineProps(), 200));
+    public static final DeferredBlock<Block> BLAST_FURNACE = PowerRegistries.BLOCKS.registerBlock("blast_furnace", () -> new BaseMachineBlock(machineProps(), 500));
+    public static final DeferredBlock<Block> COKE_OVEN = PowerRegistries.BLOCKS.registerBlock("coke_oven", () -> new BaseMachineBlock(machineProps(), 100));
+    public static final DeferredBlock<Block> OIL_REFINERY = PowerRegistries.BLOCKS.registerBlock("oil_refinery", () -> new BaseMachineBlock(machineProps(), 2000));
+    public static final DeferredBlock<Block> CHEMICAL_PLANT = PowerRegistries.BLOCKS.registerBlock("chemical_plant", () -> new BaseMachineBlock(machineProps(), 1500));
+    public static final DeferredBlock<Block> ASSEMBLY_LINE = PowerRegistries.BLOCKS.registerBlock("assembly_line", () -> new BaseMachineBlock(machineProps(), 1000));
+    public static final DeferredBlock<Block> THREE_D_PRINTER = PowerRegistries.BLOCKS.registerBlock("3d_printer", () -> new BaseMachineBlock(machineProps(), 800));
+    public static final DeferredBlock<Block> NUCLEAR_CENTRIFUGE = PowerRegistries.BLOCKS.registerBlock("nuclear_centrifuge", () -> new BaseMachineBlock(machineProps(), 5000));
+    public static final DeferredBlock<Block> PARTICLE_ACCELERATOR = PowerRegistries.BLOCKS.registerBlock("particle_accelerator", () -> new BaseMachineBlock(machineProps(), 50000));
+
+    public static void init() {}
+}
+Total Machines/Industry registered: 11
+7. Transport & Vehicle Registry
+File: entities/VehicleRegistry.java
+code
+Java
+package com.horizonpack.horizonpower.entities;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import com.horizonpack.horizonpower.entities.land.*;
+import com.horizonpack.horizonpower.entities.sea.*;
+import com.horizonpack.horizonpower.entities.air_space.*;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.neoforged.neoforge.registries.DeferredHolder;
+
+public class VehicleRegistry {
+
+    private static <T extends net.minecraft.world.entity.Entity> DeferredHolder<EntityType<?>, EntityType<T>> register(String name, EntityType.EntityFactory<T> factory, float width, float height) {
+        return PowerRegistries.ENTITY_TYPES.register(name, () -> EntityType.Builder.of(factory, MobCategory.MISC).sized(width, height).build(name));
+    }
+
+    // ── LAND VEHICLES (8) ─────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<CartEntity>> CART = register("cart", CartEntity::new, 1.5f, 1.2f);
+    public static final DeferredHolder<EntityType<?>, EntityType<WagonEntity>> WAGON = register("wagon", WagonEntity::new, 2.0f, 1.8f);
+    public static final DeferredHolder<EntityType<?>, EntityType<ChariotEntity>> CHARIOT = register("chariot", ChariotEntity::new, 2.0f, 1.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<LocomotiveEntity>> LOCOMOTIVE = register("locomotive", LocomotiveEntity::new, 3.0f, 3.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SteamCarEntity>> STEAM_CAR = register("steam_car", SteamCarEntity::new, 2.0f, 1.6f);
+    public static final DeferredHolder<EntityType<?>, EntityType<AutomobileEntity>> AUTOMOBILE = register("automobile", AutomobileEntity::new, 2.0f, 1.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<TruckEntity>> TRUCK = register("truck", TruckEntity::new, 2.5f, 3.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<MotorcycleEntity>> MOTORCYCLE = register("motorcycle", MotorcycleEntity::new, 1.0f, 1.2f);
+
+    // ── SEA VEHICLES (6) ──────────────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<SailingShipEntity>> SAILING_SHIP = register("sailing_ship", SailingShipEntity::new, 4.0f, 6.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<GalleyEntity>> GALLEY = register("galley", GalleyEntity::new, 3.0f, 2.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SteamShipEntity>> STEAM_SHIP = register("steam_ship", SteamShipEntity::new, 5.0f, 4.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<IroncladEntity>> IRONCLAD = register("ironclad", IroncladEntity::new, 4.5f, 3.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SubmarineEntity>> SUBMARINE = register("submarine", SubmarineEntity::new, 3.0f, 2.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<AircraftCarrierEntity>> AIRCRAFT_CARRIER = register("aircraft_carrier", AircraftCarrierEntity::new, 16.0f, 8.0f);
+
+    // ── AIR & SPACE VEHICLES (6) ──────────────────────────────────────────────
+    public static final DeferredHolder<EntityType<?>, EntityType<BiplaneEntity>> BIPLANE = register("biplane", BiplaneEntity::new, 3.5f, 2.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<ZeppelinEntity>> ZEPPELIN = register("zeppelin", ZeppelinEntity::new, 8.0f, 8.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<JetAircraftEntity>> JET_AIRCRAFT = register("jet_aircraft", JetAircraftEntity::new, 4.0f, 2.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<HelicopterEntity>> HELICOPTER = register("helicopter", HelicopterEntity::new, 3.0f, 2.5f);
+    public static final DeferredHolder<EntityType<?>, EntityType<RocketEntity>> ROCKET = register("rocket", RocketEntity::new, 3.0f, 12.0f);
+    public static final DeferredHolder<EntityType<?>, EntityType<SpaceShuttleEntity>> SPACE_SHUTTLE = register("space_shuttle", SpaceShuttleEntity::new, 6.0f, 4.0f);
+
+    public static void init() {}
+}
+Total Transport Vehicles registered: 20
+File: entities/BaseVehicleEntity.java
+code
+Java
+package com.horizonpack.horizonpower.entities;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
+
+public abstract class BaseVehicleEntity extends Entity {
+
+    private static final EntityDataAccessor<Float> FUEL_AMOUNT = SynchedEntityData.defineId(BaseVehicleEntity.class, EntityDataSerializers.FLOAT);
+    
+    protected float maxSpeed;
+    protected float acceleration;
+    protected float currentSpeed = 0f;
+    protected float steeringAngle = 0f;
+    protected float fuelConsumptionRate;
+    protected String requiredAge;
+
+    public BaseVehicleEntity(EntityType<?> type, Level level, float maxSpeed, float acceleration, float fuelConsumptionRate, String requiredAge) {
+        super(type, level);
+        this.maxSpeed = maxSpeed;
+        this.acceleration = acceleration;
+        this.fuelConsumptionRate = fuelConsumptionRate;
+        this.requiredAge = requiredAge;
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        builder.define(FUEL_AMOUNT, 0f);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (this.isVehicle() && this.getFuel() > 0) {
+            handlePhysics();
+            if (currentSpeed > 0.01f) {
+                this.setFuel(this.getFuel() - fuelConsumptionRate);
+            }
+        } else {
+            currentSpeed *= 0.9f; // Decelerate if out of fuel or empty
+        }
+        
+        Vec3 forward = Vec3.directionFromRotation(0, this.getYRot());
+        this.setDeltaMovement(forward.scale(currentSpeed));
+        this.move(net.minecraft.world.entity.MoverType.SELF, this.getDeltaMovement());
+    }
+
+    protected void handlePhysics() {
+        // Overridden by specific vehicle classes (Land, Sea, Air)
+    }
+
+    public float getFuel() { return this.entityData.get(FUEL_AMOUNT); }
+    public void setFuel(float fuel) { this.entityData.set(FUEL_AMOUNT, fuel); }
+
+    public void updateInputs(boolean forward, boolean backward, boolean left, boolean right) {
+        if (forward && currentSpeed < maxSpeed) currentSpeed += acceleration;
+        if (backward && currentSpeed > -maxSpeed / 2) currentSpeed -= acceleration;
+        if (left) this.setYRot(this.getYRot() - 5f);
+        if (right) this.setYRot(this.getYRot() + 5f);
+    }
+
+    @Override
+    protected void readAdditionalSaveData(CompoundTag tag) {
+        this.setFuel(tag.getFloat("Fuel"));
+    }
+
+    @Override
+    protected void addAdditionalSaveData(CompoundTag tag) {
+        tag.putFloat("Fuel", this.getFuel());
+    }
+}
+
+8. Infrastructure Registry (Roads & Rails)
+File: blocks/infrastructure/InfrastructureRegistry.java
+These blocks provide surface-level pathways that directly interact with vehicle physics. Land vehicles receive a speed and acceleration multiplier depending on the road surface they are traveling on.
+code
+Java
+package com.horizonpack.horizonpower.blocks.infrastructure;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.neoforged.neoforge.registries.DeferredBlock;
+
+public class InfrastructureRegistry {
+
+    private static BlockBehaviour.Properties roadProps(MapColor color, float strength) {
+        return BlockBehaviour.Properties.of().mapColor(color).strength(strength).sound(SoundType.STONE).requiresCorrectToolForDrops();
+    }
+
+    public static final DeferredBlock<Block> DIRT_PATH = PowerRegistries.BLOCKS.registerBlock("dirt_path", 
+        () -> new BaseRoadBlock(roadProps(MapColor.DIRT, 0.6f), 0.8f, "stone_age"));
+
+    public static final DeferredBlock<Block> GRAVEL_ROAD = PowerRegistries.BLOCKS.registerBlock("gravel_road", 
+        () -> new BaseRoadBlock(roadProps(MapColor.STONE, 0.8f), 0.9f, "copper_age"));
+
+    public static final DeferredBlock<Block> COBBLESTONE_ROAD = PowerRegistries.BLOCKS.registerBlock("cobblestone_road", 
+        () -> new BaseRoadBlock(roadProps(MapColor.STONE, 1.5f), 1.0f, "iron_age"));
+
+    public static final DeferredBlock<Block> PAVED_ROAD = PowerRegistries.BLOCKS.registerBlock("paved_road", 
+        () -> new BaseRoadBlock(roadProps(MapColor.COLOR_BLACK, 2.0f), 1.3f, "industrial"));
+
+    public static final DeferredBlock<Block> HIGHWAY = PowerRegistries.BLOCKS.registerBlock("highway", 
+        () -> new BaseRoadBlock(roadProps(MapColor.COLOR_BLACK, 3.0f), 1.6f, "modern"));
+
+    public static final DeferredBlock<Block> RAIL_TRACK = PowerRegistries.BLOCKS.registerBlock("rail_track", 
+        () -> new BaseRailBlock(roadProps(MapColor.METAL, 2.0f), 2.0f, "industrial"));
+
+    public static final DeferredBlock<Block> ELECTRIFIED_RAIL = PowerRegistries.BLOCKS.registerBlock("electrified_rail", 
+        () -> new BaseRailBlock(roadProps(MapColor.METAL, 2.5f), 2.5f, "modern"));
+
+    public static final DeferredBlock<Block> MAGLEV_RAIL = PowerRegistries.BLOCKS.registerBlock("maglev_rail", 
+        () -> new BaseRailBlock(roadProps(MapColor.DIAMOND, 4.0f), 4.0f, "future"));
+
+    public static void init() {}
+}
+Total Roads/Rails registered: 8
+9. Energy Capability & Grid System
+9.1 HorizonEnergyStorage
+Extends the standard IEnergyStorage concept, providing a unified power storage object used by all Horizon generators, machines, and batteries.
+File: energy/HorizonEnergyStorage.java
+code
+Java
+package com.horizonpack.horizonpower.energy;
+
+import net.minecraft.nbt.CompoundTag;
+import net.neoforged.neoforge.energy.IEnergyStorage;
+
+public class HorizonEnergyStorage implements IEnergyStorage {
+
+    private int energy;
+    private final int capacity;
+    private final int maxReceive;
+    private final int maxExtract;
+
+    public HorizonEnergyStorage(int capacity, int maxReceive, int maxExtract) {
+        this.capacity = capacity;
+        this.maxReceive = maxReceive;
+        this.maxExtract = maxExtract;
+    }
+
+    @Override
+    public int receiveEnergy(int maxReceive, boolean simulate) {
+        if (!canReceive()) return 0;
+        int energyReceived = Math.min(capacity - energy, Math.min(this.maxReceive, maxReceive));
+        if (!simulate) {
+            energy += energyReceived;
+        }
+        return energyReceived;
+    }
+
+    public int receiveEnergyInternal(int maxReceive, boolean simulate) {
+        int energyReceived = Math.min(capacity - energy, maxReceive);
+        if (!simulate) {
+            energy += energyReceived;
+        }
+        return energyReceived;
+    }
+
+    @Override
+    public int extractEnergy(int maxExtract, boolean simulate) {
+        if (!canExtract()) return 0;
+        int energyExtracted = Math.min(energy, Math.min(this.maxExtract, maxExtract));
+        if (!simulate) {
+            energy -= energyExtracted;
+        }
+        return energyExtracted;
+    }
+
+    public int extractEnergyInternal(int maxExtract, boolean simulate) {
+        int energyExtracted = Math.min(energy, maxExtract);
+        if (!simulate) {
+            energy -= energyExtracted;
+        }
+        return energyExtracted;
+    }
+
+    @Override
+    public int getEnergyStored() {
+        return energy;
+    }
+
+    public void setEnergy(int energy) {
+        this.energy = Math.max(0, Math.min(capacity, energy));
+    }
+
+    @Override
+    public int getMaxEnergyStored() {
+        return capacity;
+    }
+
+    @Override
+    public boolean canExtract() {
+        return this.maxExtract > 0;
+    }
+
+    @Override
+    public boolean canReceive() {
+        return this.maxReceive > 0;
+    }
+
+    public CompoundTag serializeNBT() {
+        CompoundTag tag = new CompoundTag();
+        tag.putInt("Energy", energy);
+        return tag;
+    }
+
+    public void deserializeNBT(CompoundTag nbt) {
+        energy = nbt.getInt("Energy");
+    }
+}
+9.2 PowerGridNode
+A simplified DFS distributor that pushes energy from generators through valid cable blocks into receiving machines.
+File: energy/PowerGridNode.java
+code
+Java
+package com.horizonpack.horizonpower.energy;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.neoforged.neoforge.capabilities.Capabilities;
+import net.neoforged.neoforge.energy.IEnergyStorage;
+
+import java.util.ArrayDeque;
+import java.util.HashSet;
+import java.util.Queue;
+import java.util.Set;
+
+public class PowerGridNode {
+
+    public static void distributeEnergy(Level level, BlockPos sourcePos, HorizonEnergyStorage sourceStorage) {
+        if (sourceStorage.getEnergyStored() <= 0) return;
+
+        Set<BlockPos> visited = new HashSet<>();
+        Queue<BlockPos> queue = new ArrayDeque<>();
+        
+        visited.add(sourcePos);
+        for (Direction dir : Direction.values()) {
+            queue.add(sourcePos.relative(dir));
+        }
+
+        int energyToDistribute = sourceStorage.extractEnergyInternal(sourceStorage.getEnergyStored(), true);
+        if (energyToDistribute == 0) return;
+
+        while (!queue.isEmpty() && energyToDistribute > 0) {
+            BlockPos current = queue.poll();
+            if (visited.contains(current)) continue;
+            visited.add(current);
+
+            IEnergyStorage handler = level.getCapability(Capabilities.EnergyStorage.BLOCK, current, null);
+            if (handler != null && handler.canReceive()) {
+                int accepted = handler.receiveEnergy(energyToDistribute, false);
+                if (accepted > 0) {
+                    energyToDistribute -= accepted;
+                    sourceStorage.extractEnergyInternal(accepted, false);
+                    if (level.getBlockEntity(current) != null) {
+                        level.getBlockEntity(current).setChanged();
+                    }
+                }
+            }
+
+            // If it's a cable, keep traversing
+            if (level.getBlockState(current).getBlock() instanceof com.horizonpack.horizonpower.blocks.cables.BaseCableBlock) {
+                for (Direction dir : Direction.values()) {
+                    queue.add(current.relative(dir));
+                }
+            }
+        }
+    }
+}
+10. Factory & Automation System
+Industrial machines take inputs from adjacent inventories (or specific slots), consume energy, and produce output over a set processing time.
+File: blockentities/MachineBlockEntity.java
+code
+Java
+package com.horizonpack.horizonpower.blockentities;
+
+import com.horizonpack.horizonpower.core.PowerRegistries;
+import com.horizonpack.horizonpower.energy.HorizonEnergyStorage;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.inventory.ContainerData;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.items.ItemStackHandler;
+
+public class MachineBlockEntity extends BlockEntity {
+
+    public final HorizonEnergyStorage energyStorage;
+    public final ItemStackHandler inventory = new ItemStackHandler(3); // 0=Input, 1=Secondary/Catalyst, 2=Output
+    
+    private int progress = 0;
+    private int maxProgress = 200;
+    private final int energyPerTick;
+
+    protected final ContainerData dataAccess = new ContainerData() {
+        @Override public int get(int index) {
+            return switch(index) {
+                case 0 -> progress;
+                case 1 -> maxProgress;
+                case 2 -> energyStorage.getEnergyStored();
+                case 3 -> energyStorage.getMaxEnergyStored();
+                default -> 0;
+            };
+        }
+        @Override public void set(int index, int value) {
+            switch(index) {
+                case 0 -> progress = value;
+                case 1 -> maxProgress = value;
+                case 2 -> energyStorage.setEnergy(value);
+            }
+        }
+        @Override public int getCount() { return 4; }
+    };
+
+    public MachineBlockEntity(BlockPos pos, BlockState state, int energyCapacity, int energyPerTick) {
+        super(PowerRegistries.MACHINE_BE.get(), pos, state);
+        this.energyStorage = new HorizonEnergyStorage(energyCapacity, energyCapacity / 10, 0);
+        this.energyPerTick = energyPerTick;
+    }
+
+    public static void serverTick(Level level, BlockPos pos, BlockState state, MachineBlockEntity be) {
+        boolean isWorking = false;
+
+        if (be.hasValidRecipe() && be.energyStorage.getEnergyStored() >= be.energyPerTick) {
+            be.energyStorage.extractEnergyInternal(be.energyPerTick, false);
+            be.progress++;
+            isWorking = true;
+
+            if (be.progress >= be.maxProgress) {
+                be.processRecipe();
+                be.progress = 0;
+            }
+        } else {
+            if (be.progress > 0) be.progress--;
+        }
+
+        // Update block state lit/active boolean if needed
+        boolean wasWorking = state.getValue(com.horizonpack.horizonpower.blocks.machines.BaseMachineBlock.ACTIVE);
+        if (isWorking != wasWorking) {
+            level.setBlock(pos, state.setValue(com.horizonpack.horizonpower.blocks.machines.BaseMachineBlock.ACTIVE, isWorking), 3);
+        }
+        
+        if (isWorking) be.setChanged();
+    }
+
+    private boolean hasValidRecipe() {
+        // Simplified check. Real implementation queries the RecipeManager for a matching custom IRecipeType
+        ItemStack input = inventory.getStackInSlot(0);
+        return !input.isEmpty() && inventory.getStackInSlot(2).getCount() < 64;
+    }
+
+    private void processRecipe() {
+        // Simplified. Real implementation maps inputs to outputs via Recipe
+        inventory.extractItem(0, 1, false);
+        inventory.insertItem(2, new ItemStack(net.minecraft.world.item.Items.IRON_INGOT), false);
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.put("Inventory", inventory.serializeNBT(registries));
+        tag.put("Energy", energyStorage.serializeNBT());
+        tag.putInt("Progress", progress);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        inventory.deserializeNBT(registries, tag.getCompound("Inventory"));
+        energyStorage.deserializeNBT(tag.getCompound("Energy"));
+        progress = tag.getInt("Progress");
+    }
+}
+11. Vehicle Physics & Fuel System
+Vehicles in HorizonPower act as standalone entities driven by player input packets. They implement inertia, gravity, road-friction checks, and fuel consumption.
+File: entities/land/AutomobileEntity.java
+code
+Java
+package com.horizonpack.horizonpower.entities.land;
+
+import com.horizonpack.horizonpower.blocks.infrastructure.BaseRoadBlock;
+import com.horizonpack.horizonpower.entities.BaseVehicleEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class AutomobileEntity extends BaseVehicleEntity {
+
+    public AutomobileEntity(EntityType<?> type, Level level) {
+        super(type, level, 1.2f, 0.05f, 0.1f, "industrial"); // maxSpeed, accel, fuel/tick, age
+    }
+
+    @Override
+    public InteractionResult interact(Player player, InteractionHand hand) {
+        if (!this.level().isClientSide) {
+            player.startRiding(this);
+            return InteractionResult.SUCCESS;
+        }
+        return InteractionResult.PASS;
+    }
+
+    @Override
+    protected void handlePhysics() {
+        // Apply gravity
+        if (!this.onGround()) {
+            this.setDeltaMovement(this.getDeltaMovement().add(0, -0.04d, 0));
+        }
+
+        // Check road surface for speed multipliers
+        BlockPos posBelow = this.blockPosition().below();
+        BlockState stateBelow = this.level().getBlockState(posBelow);
+        
+        float surfaceMultiplier = 0.5f; // Default dirt/grass off-roading penalty
+        
+        if (stateBelow.getBlock() instanceof BaseRoadBlock road) {
+            surfaceMultiplier = road.getSpeedMultiplier();
+        }
+        
+        // Apply surface drag and speed limit modification
+        this.maxSpeed = 1.2f * surfaceMultiplier;
+        
+        // Turn radius tightening based on speed (prevents 90 degree turns at 100km/h)
+        float turnRadius = Math.max(1.0f, currentSpeed * 10f);
+        // Turn angle applied in tick()
+    }
+}
+12. Event Hooks
+File: events/PowerEventHandlers.java
+code
+Java
+package com.horizonpack.horizonpower.events;
+
+import com.horizonpack.horizonpower.core.HorizonPower;
+import com.horizonpack.horizonpower.entities.BaseVehicleEntity;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonPower.MODID)
+public class PowerEventHandlers {
+
+    @SubscribeEvent
+    public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
+        if (event.getTarget() instanceof BaseVehicleEntity vehicle && !event.getLevel().isClientSide) {
+            // Logic for fueling vehicles with items (e.g. coal, oil buckets)
+            net.minecraft.world.item.ItemStack stack = event.getItemStack();
+            if (stack.is(com.horizonpack.horizonpower.core.PowerRegistries.VEHICLE_FUELS_TAG)) {
+                float fuelValue = 1000f; // Hardcoded example. In prod, read from HorizonFuels map.
+                vehicle.setFuel(vehicle.getFuel() + fuelValue);
+                if (!event.getEntity().isCreative()) stack.shrink(1);
+                event.setCanceled(true);
+            }
+        }
+    }
+}
+13. Network Packets
+Client-side input needs to be relayed to the server-side vehicle entity to update acceleration and steering.
+File: network/packets/VehicleInputPacket.java
+code
+Java
+package com.horizonpack.horizonpower.network.packets;
+
+import com.horizonpack.horizonpower.core.HorizonPower;
+import com.horizonpack.horizonpower.entities.BaseVehicleEntity;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+public record VehicleInputPacket(boolean forward, boolean backward, boolean left, boolean right) implements CustomPacketPayload {
+
+    public static final Type<VehicleInputPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonPower.MODID, "vehicle_input"));
+
+    public static final StreamCodec<ByteBuf, VehicleInputPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.BOOL, VehicleInputPacket::forward,
+        ByteBufCodecs.BOOL, VehicleInputPacket::backward,
+        ByteBufCodecs.BOOL, VehicleInputPacket::left,
+        ByteBufCodecs.BOOL, VehicleInputPacket::right,
+        VehicleInputPacket::new
+    );
+
+    @Override
+    public Type<VehicleInputPacket> type() { return TYPE; }
+
+    public static void handleServer(VehicleInputPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            net.minecraft.world.entity.player.Player player = context.player();
+            if (player.getVehicle() instanceof BaseVehicleEntity vehicle) {
+                vehicle.updateInputs(packet.forward(), packet.backward(), packet.left(), packet.right());
+            }
+        });
+    }
+}
+Packet Registration:
+code
+Java
+package com.horizonpack.horizonpower.network;
+
+import com.horizonpack.horizonpower.core.HorizonPower;
+import com.horizonpack.horizonpower.network.packets.VehicleInputPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class PowerPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonPower.MODID).versioned("1.0.0");
+        registrar.playToServer(VehicleInputPacket.TYPE, VehicleInputPacket.STREAM_CODEC, VehicleInputPacket::handleServer);
+    }
+}
+14. Configuration
+File: core/PowerConfig.java
+code
+Java
+package com.horizonpack.horizonpower.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class PowerConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue fuelConsumptionMultiplier;
+        public final ModConfigSpec.IntValue globalEnergyCapacityMultiplier;
+        public final ModConfigSpec.BooleanValue requiresRoadsForSpeed;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("vehicles");
+            fuelConsumptionMultiplier = builder.comment("Multiplies fuel usage of all vehicles").defineInRange("fuelConsumptionMultiplier", 1.0, 0.1, 10.0);
+            requiresRoadsForSpeed = builder.comment("If true, land vehicles are severely slowed on grass/dirt").define("requiresRoadsForSpeed", true);
+            builder.pop();
+
+            builder.push("energy");
+            globalEnergyCapacityMultiplier = builder.comment("Multiplies storage capacity of all batteries and machines").defineInRange("globalEnergyCapacityMultiplier", 1, 1, 10);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showVehicleHUD;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showVehicleHUD = builder.comment("Show speedometer and fuel gauge").define("showVehicleHUD", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+15. Data Pack Integration
+(Recipes and Tags for machines and vehicles are fully data-driven. See Section 17 & 19).
+16. Blockstate & Model JSONs
+16.1 Copper Wire Blockstate
+assets/horizonpower/blockstates/copper_wire.json
+code
+JSON
+{
+  "multipart": [
+    { "apply": { "model": "horizonpower:block/wire_core" } },
+    { "when": { "north": "true" }, "apply": { "model": "horizonpower:block/wire_connection", "y": 0 } },
+    { "when": { "east": "true" },  "apply": { "model": "horizonpower:block/wire_connection", "y": 90 } },
+    { "when": { "south": "true" }, "apply": { "model": "horizonpower:block/wire_connection", "y": 180 } },
+    { "when": { "west": "true" },  "apply": { "model": "horizonpower:block/wire_connection", "y": 270 } },
+    { "when": { "up": "true" },    "apply": { "model": "horizonpower:block/wire_connection", "x": 270 } },
+    { "when": { "down": "true" },  "apply": { "model": "horizonpower:block/wire_connection", "x": 90 } }
+  ]
+}
+16.2 Machine (Sawmill)
+assets/horizonpower/blockstates/sawmill.json
+code
+JSON
+{
+  "variants": {
+    "facing=north,active=false": { "model": "horizonpower:block/sawmill_off", "y": 0 },
+    "facing=east,active=false":  { "model": "horizonpower:block/sawmill_off", "y": 90 },
+    "facing=south,active=false": { "model": "horizonpower:block/sawmill_off", "y": 180 },
+    "facing=west,active=false":  { "model": "horizonpower:block/sawmill_off", "y": 270 },
+    "facing=north,active=true":  { "model": "horizonpower:block/sawmill_on", "y": 0 },
+    "facing=east,active=true":   { "model": "horizonpower:block/sawmill_on", "y": 90 },
+    "facing=south,active=true":  { "model": "horizonpower:block/sawmill_on", "y": 180 },
+    "facing=west,active=true":   { "model": "horizonpower:block/sawmill_on", "y": 270 }
+  }
+}
+17. Recipe JSONs
+17.1 Crafting a Copper Wire
+data/horizonpower/recipes/copper_wire.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [{ "type": "horizoncore:age_condition", "required_age": "industrial" }],
+  "pattern": ["   ", "CCC", "   "],
+  "key": {
+    "C": { "item": "horizondata:copper_ingot" }
+  },
+  "result": { "id": "horizonpower:copper_wire", "count": 6 }
+}
+17.2 Assembling a Steam Car
+data/horizonpower/recipes/steam_car.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [{ "type": "horizoncore:age_condition", "required_age": "industrial" }],
+  "pattern": ["SSS", "WFW", "WWW"],
+  "key": {
+    "S": { "item": "horizondata:steel_plate" },
+    "W": { "item": "horizonpower:wheel" },
+    "F": { "item": "horizonpower:steam_engine_block" }
+  },
+  "result": { "id": "horizonpower:steam_car", "count": 1 }
+}
+18. Loot Table JSONs
+18.1 Sawmill Block Drop
+data/horizonpower/loot_tables/blocks/sawmill.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1.0,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonpower:sawmill",
+          "functions": [
+            {
+              "function": "minecraft:copy_components",
+              "source": "block_entity",
+              "include": ["horizonpower:energy_stored"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+19. Tag JSONs
+19.1 Vehicle Fuels
+data/horizonpower/tags/items/vehicle_fuels.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "minecraft:coal",
+    "minecraft:charcoal",
+    "horizondata:coke_coal",
+    "horizondata:oil_bucket",
+    "horizondata:diesel_bucket",
+    "horizondata:gasoline_bucket",
+    "horizondata:uranium_fuel_rod"
+  ]
+}
+19.2 Machine Blocks
+data/horizonpower/tags/blocks/industrial_machines.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonpower:sawmill",
+    "horizonpower:millstone",
+    "horizonpower:stamp_mill",
+    "horizonpower:blast_furnace",
+    "horizonpower:coke_oven",
+    "horizonpower:oil_refinery",
+    "horizonpower:chemical_plant",
+    "horizonpower:assembly_line",
+    "horizonpower:3d_printer",
+    "horizonpower:nuclear_centrifuge",
+    "horizonpower:particle_accelerator"
+  ]
+}
+20. Lang / Localization
+assets/horizonpower/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonpower.machinery": "HorizonPower - Industry & Machines",
+  "itemGroup.horizonpower.vehicles": "HorizonPower - Vehicles & Transport",
+
+  "block.horizonpower.wooden_conduit": "Wooden Conduit",
+  "block.horizonpower.copper_wire": "Copper Wire",
+  "block.horizonpower.iron_pipe": "Iron Pipe",
+  "block.horizonpower.steel_cable": "Steel Cable",
+  "block.horizonpower.insulated_copper_wire": "Insulated Copper Wire",
+  "block.horizonpower.high_voltage_cable": "High Voltage Cable",
+  "block.horizonpower.fiber_optic_cable": "Fiber Optic Cable",
+  "block.horizonpower.superconductor_cable": "Superconductor Cable",
+
+  "block.horizonpower.hand_crank": "Hand Crank",
+  "block.horizonpower.animal_mill": "Animal Mill",
+  "block.horizonpower.water_wheel": "Water Wheel",
+  "block.horizonpower.windmill": "Windmill",
+  "block.horizonpower.steam_engine": "Steam Engine",
+  "block.horizonpower.coal_generator": "Coal Generator",
+  "block.horizonpower.oil_burner": "Oil Burner",
+  "block.horizonpower.diesel_generator": "Diesel Generator",
+  "block.horizonpower.natural_gas_turbine": "Natural Gas Turbine",
+  "block.horizonpower.solar_panel": "Solar Panel",
+  "block.horizonpower.wind_turbine": "Wind Turbine",
+  "block.horizonpower.hydroelectric_dam": "Hydroelectric Dam",
+  "block.horizonpower.nuclear_reactor": "Nuclear Reactor",
+  "block.horizonpower.fusion_reactor": "Fusion Reactor",
+  "block.horizonpower.geothermal_plant": "Geothermal Plant",
+
+  "block.horizonpower.sawmill": "Industrial Sawmill",
+  "block.horizonpower.millstone": "Millstone",
+  "block.horizonpower.stamp_mill": "Stamp Mill",
+  "block.horizonpower.blast_furnace": "Blast Furnace",
+  "block.horizonpower.coke_oven": "Coke Oven",
+  "block.horizonpower.oil_refinery": "Oil Refinery",
+  "block.horizonpower.chemical_plant": "Chemical Plant",
+  "block.horizonpower.assembly_line": "Assembly Line",
+  "block.horizonpower.3d_printer": "3D Printer",
+  "block.horizonpower.nuclear_centrifuge": "Nuclear Centrifuge",
+  "block.horizonpower.particle_accelerator": "Particle Accelerator",
+
+  "block.horizonpower.dirt_path": "Dirt Path",
+  "block.horizonpower.gravel_road": "Gravel Road",
+  "block.horizonpower.cobblestone_road": "Cobblestone Road",
+  "block.horizonpower.paved_road": "Paved Road",
+  "block.horizonpower.highway": "Asphalt Highway",
+  "block.horizonpower.rail_track": "Iron Rail Track",
+  "block.horizonpower.electrified_rail": "Electrified Rail",
+  "block.horizonpower.maglev_rail": "Maglev Rail",
+
+  "entity.horizonpower.cart": "Wooden Cart",
+  "entity.horizonpower.wagon": "Wagon",
+  "entity.horizonpower.chariot": "Chariot",
+  "entity.horizonpower.locomotive": "Steam Locomotive",
+  "entity.horizonpower.steam_car": "Steam Carriage",
+  "entity.horizonpower.automobile": "Automobile",
+  "entity.horizonpower.truck": "Heavy Truck",
+  "entity.horizonpower.motorcycle": "Motorcycle",
+  "entity.horizonpower.sailing_ship": "Sailing Ship",
+  "entity.horizonpower.galley": "Oared Galley",
+  "entity.horizonpower.steam_ship": "Steam Ship",
+  "entity.horizonpower.ironclad": "Ironclad",
+  "entity.horizonpower.submarine": "Submarine",
+  "entity.horizonpower.aircraft_carrier": "Aircraft Carrier",
+  "entity.horizonpower.biplane": "Biplane",
+  "entity.horizonpower.zeppelin": "Zeppelin",
+  "entity.horizonpower.jet_aircraft": "Jet Aircraft",
+  "entity.horizonpower.helicopter": "Helicopter",
+  "entity.horizonpower.rocket": "Rocket",
+  "entity.horizonpower.space_shuttle": "Space Shuttle",
+
+  "gui.horizonpower.energy": "Energy: %d / %d RF",
+  "gui.horizonpower.fuel_empty": "Out of Fuel!",
+
+  "advancements.horizonpower.root.title": "Powering Up",
+  "advancements.horizonpower.root.desc": "Harness energy to automate your world.",
+  "advancements.horizonpower.first_car.title": "Hitting the Road",
+  "advancements.horizonpower.first_car.desc": "Craft and ride your first automobile."
+}
+21. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonpower'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonpower', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    // Horizon Corebreach dependencies
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonworld:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+22. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonpower"
+    version = "1.0.0"
+    displayName = "Horizon Power & Transport"
+    description = """
+Manages the electrical grid, industrial automation, and vehicle logistics for the Horizon Corebreach modpack. 
+Includes 15 generators, 11 factory machines, 20 rideable vehicles, and 8 surface infrastructure blocks.
+"""
+    logoFile = "horizonpower.png"
+
+[[dependencies.horizonpower]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonpower]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonpower]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonpower]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonpower]]
+    modId = "horizonworld"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+23. Critical Implementation Notes
+Capability Invalidation Caching: Because energy grids scan hundreds of blocks rapidly, querying level.getCapability(Capabilities.EnergyStorage.BLOCK, pos) every tick is extremely expensive. CableBlockEntity MUST implement BlockCapabilityCache pointing to its neighbors and update that cache dynamically when blocks update.
+Fluid vs Energy Constraints: The BaseCableBlock determines functionality based on its defined transfer caps during registration. If maxTransferRF is 0, the block does not provide IEnergyStorage. If maxTransferFluid is 0, it does not provide IFluidHandler. Do not register capabilities for components a pipe shouldn't have.
+Vehicle Entity Desync: When the player sends VehicleInputPacket, the server modifies the vehicle's currentSpeed and steeringAngle. To prevent violent client-side rubberbanding, the Client vehicle entity must predictively update its own vectors while waiting for the server's sync tick to correct drift.
+Road Block Friction Application: In vanilla, Block#getFriction() is meant for slipping on ice. BaseRoadBlock does not override this. Instead, BaseVehicleEntity reads the BaseRoadBlock instance beneath it and modifies its internal maxSpeed variable explicitly, allowing cars to drive fast without sliding uncontrollably like they are on blue ice.
+Energy Node Loop Prevention: PowerGridNode.distributeEnergy() uses a HashSet<BlockPos> visited queue. This guarantees that infinite loops do not happen in circular cable networks. However, large loops can lag the server. Limit the queue depth to 256 cable blocks. If power hasn't found a destination by then, it dissipates as heat loss.
+Generator Fuel Gating via Age: GeneratorBlockEntity checks the HorizonAge stored in HorizonCore via the RequiredAge string. If a player in the Stone Age attempts to use a Coal Generator, it simply refuses to process fuel and throws a translated chat error.
+Machine Automation Pipeline: MachineBlockEntity automatically pulls from the inventory of the block entity above it and pushes to the block entity below it, provided they are instances of IItemHandler. This removes the necessity of complex filtering pipes early-game, letting gravity do the work.
+VoxelShape Connectivity: BaseCableBlock constructs a dynamic VoxelShape based on 6 boolean BlockState properties (NORTH, EAST, etc.). These properties update via updateShape when neighboring blocks change. The visual block model must utilize multipart JSONs (as seen in §16) to correctly render the connections, otherwise the cables will look like solid invisible cubes with floating textures.

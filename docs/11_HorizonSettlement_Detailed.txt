@@ -1,0 +1,1240 @@
+HorizonSettlement — Detailed Technical Specification
+Mod ID: horizonsettlement
+Version: 1.0.0
+Platform: NeoForge 1.21.1 / Java 21
+Role: Architecture, Urban Planning, and Infrastructure Simulation
+Absorbed mods: HorizonArchitecture, HorizonUrban, HorizonInfrastructure
+Depends on: horizoncore, horizondata, horizonpower, horizonsociety
+Table of Contents
+Overview & Responsibilities
+File & Package Structure
+Mod Entry Point
+Custom Registries
+Building Styles Registry
+City Districts Registry
+Infrastructure Types Registry
+Mega-Structures Registry
+Urban Planning & Zoning Engine
+Construction & Scaffolding System
+Infrastructure & Utility Engine
+World SavedData (Settlement State)
+Block Entities
+Event Hooks
+Network Packets
+Configuration
+Data Pack Integration
+Blockstate & Model JSONs
+Recipe JSONs
+Loot Table JSONs
+Tag JSONs
+Lang / Localization
+build.gradle
+neoforge.mods.toml
+Critical Implementation Notes
+1. Overview & Responsibilities
+HorizonSettlement dictates how humanity builds and organizes its living spaces across the ages. It transforms random block placement into structured architectural feats, managed cities, and networked infrastructure.
+Architecture: 14 distinct building styles tracking cultural evolution, defining load-bearing requirements, necessary construction materials, and the aesthetic layout of NPC structures.
+Urban Planning: 12 specific city district types managing localized population density, property values, crime multipliers, and utility consumption.
+Infrastructure: 10 core infrastructure types connecting districts and settlements. From primitive aqueducts to subway tunnels, these networks propagate water, electricity, and sanitation.
+Mega-Structures: 9 monumental construction projects requiring massive labor, scaffolding, and years to complete, granting civilization-wide bonuses.
+Construction Mechanics: Blueprints, scaffolding, and material delivery networks. Buildings are no longer instantly placed; they require dedicated ConstructionSiteBlockEntity processing over time.
+2. File & Package Structure
+code
+Text
+horizon_settlement/
+├── src/main/java/com/horizonpack/horizonsettlement/
+│   ├── core/
+│   │   ├── HorizonSettlement.java
+│   │   ├── SettlementRegistries.java
+│   │   └── SettlementConfig.java
+│   ├── data/
+│   │   ├── registry/
+│   │   │   ├── BuildingStyle.java
+│   │   │   ├── CityDistrict.java
+│   │   │   ├── InfrastructureType.java
+│   │   │   └── MegaStructure.java
+│   │   └── SettlementSavedData.java
+│   ├── systems/
+│   │   ├── UrbanZoningEngine.java
+│   │   ├── ConstructionEngine.java
+│   │   └── UtilityNetworkEngine.java
+│   ├── blocks/
+│   │   ├── ConstructionSiteBlock.java
+│   │   ├── BlueprintTableBlock.java
+│   │   ├── ScaffoldingBlock.java
+│   │   ├── SewerPipeBlock.java
+│   │   ├── AqueductChannelBlock.java
+│   │   ├── WaterTowerBlock.java
+│   │   ├── ElectricalGridPoleBlock.java
+│   │   ├── FiberCableConduitBlock.java
+│   │   ├── SubwayTunnelBlock.java
+│   │   └── ZoningMarkerBlock.java
+│   ├── blockentities/
+│   │   ├── ConstructionSiteBlockEntity.java
+│   │   ├── BlueprintTableBlockEntity.java
+│   │   ├── WaterTowerBlockEntity.java
+│   │   └── UtilityNodeBlockEntity.java
+│   ├── items/
+│   │   ├── BlueprintItem.java
+│   │   ├── ZoningToolItem.java
+│   │   └── InspectorClipboardItem.java
+│   ├── events/
+│   │   ├── SettlementEventHandlers.java
+│   │   └── custom/
+│   │       ├── DistrictFormedEvent.java
+│   │       ├── MegaStructureCompleteEvent.java
+│   │       └── UtilityGridFailureEvent.java
+│   ├── network/
+│   │   ├── SettlementPacketHandler.java
+│   │   └── packets/
+│   │       ├── SyncZoningDataPacket.java
+│   │       └── ConstructionProgressPacket.java
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── BlueprintScreen.java
+│   │   │   └── CityManagementScreen.java
+│   │   └── render/
+│   │       ├── ConstructionSiteRenderer.java
+│   │       └── ZoningOverlayRenderer.java
+│   └── utils/
+│       ├── NetworkPathfinder.java
+│       └── DistrictMath.java
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizonsettlement/
+│   │   ├── blockstates/
+│   │   ├── models/
+│   │   ├── textures/
+│   │   └── lang/en_us.json
+│   └── data/horizonsettlement/
+│       ├── recipes/
+│       ├── loot_tables/
+│       └── tags/
+└── build.gradle
+3. Mod Entry Point
+File: core/HorizonSettlement.java
+code
+Java
+package com.horizonpack.horizonsettlement.core;
+
+import com.horizonpack.horizonsettlement.events.SettlementEventHandlers;
+import com.horizonpack.horizonsettlement.network.SettlementPacketHandler;
+import com.horizonpack.horizonsettlement.systems.ConstructionEngine;
+import com.horizonpack.horizonsettlement.systems.UrbanZoningEngine;
+import com.horizonpack.horizonsettlement.systems.UtilityNetworkEngine;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonSettlement.MODID)
+public class HorizonSettlement {
+    public static final String MODID = "horizonsettlement";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonSettlement(IEventBus modEventBus, ModContainer modContainer) {
+        modContainer.registerConfig(ModConfig.Type.COMMON, SettlementConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, SettlementConfig.CLIENT_SPEC);
+
+        SettlementRegistries.BLOCKS.register(modEventBus);
+        SettlementRegistries.ITEMS.register(modEventBus);
+        SettlementRegistries.BLOCK_ENTITIES.register(modEventBus);
+        SettlementRegistries.MENU_TYPES.register(modEventBus);
+
+        SettlementRegistries.BUILDING_STYLES.register(modEventBus);
+        SettlementRegistries.CITY_DISTRICTS.register(modEventBus);
+        SettlementRegistries.INFRASTRUCTURE_TYPES.register(modEventBus);
+        SettlementRegistries.MEGA_STRUCTURES.register(modEventBus);
+
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(SettlementRegistries::registerNewRegistries);
+        modEventBus.addListener(SettlementPacketHandler::register);
+
+        NeoForge.EVENT_BUS.register(SettlementEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            UrbanZoningEngine.init();
+            ConstructionEngine.init();
+            UtilityNetworkEngine.init();
+        });
+    }
+}
+4. Custom Registries
+File: core/SettlementRegistries.java
+code
+Java
+package com.horizonpack.horizonsettlement.core;
+
+import com.horizonpack.horizonsettlement.blocks.*;
+import com.horizonpack.horizonsettlement.blockentities.*;
+import com.horizonpack.horizonsettlement.data.registry.*;
+import com.horizonpack.horizonsettlement.items.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.level.material.PushReaction;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NewRegistryEvent;
+import net.neoforged.neoforge.registries.RegistryBuilder;
+
+public class SettlementRegistries {
+
+    public static final ResourceKey<Registry<BuildingStyle>> STYLE_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSettlement.MODID, "building_styles"));
+    public static final ResourceKey<Registry<CityDistrict>> DISTRICT_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSettlement.MODID, "city_districts"));
+    public static final ResourceKey<Registry<InfrastructureType>> INFRA_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSettlement.MODID, "infrastructure_types"));
+    public static final ResourceKey<Registry<MegaStructure>> MEGA_KEY = ResourceKey.createRegistryKey(ResourceLocation.fromNamespaceAndPath(HorizonSettlement.MODID, "mega_structures"));
+
+    public static final DeferredRegister<BuildingStyle> BUILDING_STYLES = DeferredRegister.create(STYLE_KEY, HorizonSettlement.MODID);
+    public static final DeferredRegister<CityDistrict> CITY_DISTRICTS = DeferredRegister.create(DISTRICT_KEY, HorizonSettlement.MODID);
+    public static final DeferredRegister<InfrastructureType> INFRASTRUCTURE_TYPES = DeferredRegister.create(INFRA_KEY, HorizonSettlement.MODID);
+    public static final DeferredRegister<MegaStructure> MEGA_STRUCTURES = DeferredRegister.create(MEGA_KEY, HorizonSettlement.MODID);
+
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(HorizonSettlement.MODID);
+    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(HorizonSettlement.MODID);
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE, HorizonSettlement.MODID);
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES = DeferredRegister.create(net.minecraft.core.registries.BuiltInRegistries.MENU, HorizonSettlement.MODID);
+
+    public static void registerNewRegistries(NewRegistryEvent event) {
+        event.register(new RegistryBuilder<>(STYLE_KEY).sync(true));
+        event.register(new RegistryBuilder<>(DISTRICT_KEY).sync(true));
+        event.register(new RegistryBuilder<>(INFRA_KEY).sync(true));
+        event.register(new RegistryBuilder<>(MEGA_KEY).sync(true));
+    }
+
+    // --- BLOCKS ---
+    public static final DeferredBlock<Block> CONSTRUCTION_SITE = BLOCKS.registerBlock("construction_site", () -> new ConstructionSiteBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(1.5f).sound(SoundType.WOOD)));
+    public static final DeferredBlock<Block> BLUEPRINT_TABLE = BLOCKS.registerBlock("blueprint_table", () -> new BlueprintTableBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f).sound(SoundType.WOOD)));
+    public static final DeferredBlock<Block> SCAFFOLDING_BLOCK = BLOCKS.registerBlock("scaffolding_block", () -> new ScaffoldingBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(0.5f).sound(SoundType.SCAFFOLDING).noOcclusion().pushReaction(PushReaction.DESTROY)));
+    public static final DeferredBlock<Block> SEWER_PIPE = BLOCKS.registerBlock("sewer_pipe", () -> new SewerPipeBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(3.0f).sound(SoundType.STONE).noOcclusion()));
+    public static final DeferredBlock<Block> AQUEDUCT_CHANNEL = BLOCKS.registerBlock("aqueduct_channel", () -> new AqueductChannelBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(4.0f).sound(SoundType.STONE)));
+    public static final DeferredBlock<Block> WATER_TOWER = BLOCKS.registerBlock("water_tower", () -> new WaterTowerBlock(BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(5.0f).sound(SoundType.METAL).noOcclusion()));
+    public static final DeferredBlock<Block> ELECTRICAL_GRID_POLE = BLOCKS.registerBlock("electrical_grid_pole", () -> new ElectricalGridPoleBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f).sound(SoundType.WOOD).noOcclusion()));
+    public static final DeferredBlock<Block> FIBER_CABLE_CONDUIT = BLOCKS.registerBlock("fiber_cable_conduit", () -> new FiberCableConduitBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_YELLOW).strength(1.5f).sound(SoundType.METAL).noOcclusion()));
+    public static final DeferredBlock<Block> SUBWAY_TUNNEL = BLOCKS.registerBlock("subway_tunnel", () -> new SubwayTunnelBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(6.0f).sound(SoundType.STONE)));
+    public static final DeferredBlock<Block> ZONING_MARKER = BLOCKS.registerBlock("zoning_marker", () -> new ZoningMarkerBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(0.1f).sound(SoundType.WOOL).noOcclusion().instabreak()));
+
+    // --- ITEMS ---
+    public static final DeferredItem<Item> BLUEPRINT = ITEMS.registerSimpleItem("blueprint", new Item.Properties().stacksTo(16));
+    public static final DeferredItem<Item> ZONING_TOOL = ITEMS.registerSimpleItem("zoning_tool", new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> INSPECTOR_CLIPBOARD = ITEMS.registerSimpleItem("inspector_clipboard", new Item.Properties().stacksTo(1));
+
+    static {
+        BLOCKS.getEntries().forEach(block -> ITEMS.registerSimpleBlockItem(block.getId().getPath(), block));
+        BuildingStyle.registerAll();
+        CityDistrict.registerAll();
+        InfrastructureType.registerAll();
+        MegaStructure.registerAll();
+    }
+
+    // --- BLOCK ENTITIES ---
+    public static final java.util.function.Supplier<BlockEntityType<ConstructionSiteBlockEntity>> CONSTRUCTION_SITE_BE = BLOCK_ENTITIES.register("construction_site", () -> BlockEntityType.Builder.of(ConstructionSiteBlockEntity::new, CONSTRUCTION_SITE.get()).build(null));
+    public static final java.util.function.Supplier<BlockEntityType<BlueprintTableBlockEntity>> BLUEPRINT_TABLE_BE = BLOCK_ENTITIES.register("blueprint_table", () -> BlockEntityType.Builder.of(BlueprintTableBlockEntity::new, BLUEPRINT_TABLE.get()).build(null));
+    public static final java.util.function.Supplier<BlockEntityType<WaterTowerBlockEntity>> WATER_TOWER_BE = BLOCK_ENTITIES.register("water_tower", () -> BlockEntityType.Builder.of(WaterTowerBlockEntity::new, WATER_TOWER.get()).build(null));
+    public static final java.util.function.Supplier<BlockEntityType<UtilityNodeBlockEntity>> UTILITY_NODE_BE = BLOCK_ENTITIES.register("utility_node", () -> BlockEntityType.Builder.of(UtilityNodeBlockEntity::new, SEWER_PIPE.get(), AQUEDUCT_CHANNEL.get(), ELECTRICAL_GRID_POLE.get(), FIBER_CABLE_CONDUIT.get()).build(null));
+}
+5. Building Styles Registry
+File: data/registry/BuildingStyle.java
+code
+Java
+package com.horizonpack.horizonsettlement.data.registry;
+
+import com.horizonpack.horizonsettlement.core.SettlementRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record BuildingStyle(ResourceLocation id, String nameKey, String requiredAgeId, String primaryMaterialTag, float durabilityMultiplier, float aestheticPrestige) {
+
+    public static void registerAll() {
+        register("primitive_mud_hut", "style.primitive_mud_hut", "stone_age", "horizonworld:geological_surface", 0.5f, 1.0f);
+        register("tent_camp", "style.tent_camp", "stone_age", "minecraft:wool", 0.3f, 1.0f);
+        register("longhouse", "style.longhouse", "stone_age", "minecraft:logs", 0.8f, 2.0f);
+        register("adobe_house", "style.adobe_house", "copper_age", "minecraft:terracotta", 1.0f, 3.0f);
+        register("timber_frame", "style.timber_frame", "bronze_age", "minecraft:planks", 1.2f, 4.0f);
+        register("stone_cottage", "style.stone_cottage", "iron_age", "minecraft:stone_crafting_materials", 1.5f, 5.0f);
+        register("roman_domus", "style.roman_domus", "iron_age", "horizondata:marble", 2.0f, 10.0f);
+        register("medieval_townhouse", "style.medieval_townhouse", "medieval", "minecraft:stone_bricks", 1.8f, 8.0f);
+        register("gothic_cathedral", "style.gothic_cathedral", "medieval", "horizondata:limestone", 3.0f, 25.0f);
+        register("renaissance_palazzo", "style.renaissance_palazzo", "medieval", "horizondata:polished_stones", 2.5f, 20.0f);
+        register("baroque_mansion", "style.baroque_mansion", "industrial", "horizondata:brick_bonds", 2.2f, 30.0f);
+        register("industrial_tenement", "style.industrial_tenement", "industrial", "minecraft:bricks", 1.8f, 2.0f);
+        register("modernist_apartment", "style.modernist_apartment", "modern", "horizondata:concrete", 2.5f, 15.0f);
+        register("skyscraper", "style.skyscraper", "modern", "horizondata:steel_blocks", 5.0f, 50.0f);
+    }
+
+    private static void register(String id, String key, String age, String tag, float dur, float pres) {
+        SettlementRegistries.BUILDING_STYLES.register(id, () -> new BuildingStyle(
+            ResourceLocation.fromNamespaceAndPath("horizonsettlement", id), key, age, tag, dur, pres));
+    }
+}
+Total Building Styles registered: 14
+6. City Districts Registry
+File: data/registry/CityDistrict.java
+code
+Java
+package com.horizonpack.horizonsettlement.data.registry;
+
+import com.horizonpack.horizonsettlement.core.SettlementRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record CityDistrict(ResourceLocation id, String nameKey, float populationDensity, float propertyValueMultiplier, float crimeMultiplier, float utilityDrawMultiplier) {
+
+    public static void registerAll() {
+        register("residential", "district.residential", 1.0f, 1.0f, 1.0f, 1.0f);
+        register("commercial", "district.commercial", 0.5f, 1.5f, 1.2f, 1.5f);
+        register("industrial", "district.industrial", 0.1f, 0.5f, 1.5f, 3.0f);
+        register("agricultural", "district.agricultural", 0.2f, 0.8f, 0.5f, 2.0f);
+        register("military", "district.military", 0.3f, 0.9f, 0.1f, 1.2f);
+        register("religious", "district.religious", 0.1f, 1.2f, 0.2f, 0.8f);
+        register("academic", "district.academic", 0.4f, 1.3f, 0.3f, 1.4f);
+        register("administrative", "district.administrative", 0.2f, 1.4f, 0.1f, 1.1f);
+        register("slum", "district.slum", 3.0f, 0.2f, 3.0f, 0.5f);
+        register("noble_quarter", "district.noble_quarter", 0.2f, 3.0f, 0.2f, 2.0f);
+        register("port_district", "district.port_district", 0.8f, 1.1f, 1.8f, 1.5f);
+        register("market_district", "district.market_district", 0.6f, 1.2f, 1.4f, 1.0f);
+    }
+
+    private static void register(String id, String key, float pop, float val, float crime, float util) {
+        SettlementRegistries.CITY_DISTRICTS.register(id, () -> new CityDistrict(
+            ResourceLocation.fromNamespaceAndPath("horizonsettlement", id), key, pop, val, crime, util));
+    }
+}
+Total City Districts registered: 12
+7. Infrastructure Types Registry
+File: data/registry/InfrastructureType.java
+code
+Java
+package com.horizonpack.horizonsettlement.data.registry;
+
+import com.horizonpack.horizonsettlement.core.SettlementRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record InfrastructureType(ResourceLocation id, String nameKey, String requiredAgeId, float constructionCostMultiplier, float throughputCapacity) {
+
+    public static void registerAll() {
+        register("dirt_road", "infra.dirt_road", "stone_age", 0.1f, 10.0f);
+        register("cobblestone_street", "infra.cobblestone_street", "iron_age", 0.5f, 50.0f);
+        register("paved_avenue", "infra.paved_avenue", "industrial", 1.2f, 200.0f);
+        register("highway", "infra.highway", "modern", 2.5f, 1000.0f);
+        register("aqueduct", "infra.aqueduct", "iron_age", 3.0f, 500.0f);
+        register("sewer_pipe", "infra.sewer_pipe", "industrial", 1.5f, 300.0f);
+        register("water_tower", "infra.water_tower", "industrial", 2.0f, 800.0f);
+        register("electrical_grid_pole", "infra.electrical_grid_pole", "industrial", 1.0f, 1000.0f);
+        register("fiber_cable_conduit", "infra.fiber_cable_conduit", "modern", 3.0f, 10000.0f);
+        register("subway_tunnel", "infra.subway_tunnel", "modern", 10.0f, 5000.0f);
+    }
+
+    private static void register(String id, String key, String age, float cost, float capacity) {
+        SettlementRegistries.INFRASTRUCTURE_TYPES.register(id, () -> new InfrastructureType(
+            ResourceLocation.fromNamespaceAndPath("horizonsettlement", id), key, age, cost, capacity));
+    }
+}
+Total Infrastructure Types registered: 10
+8. Mega-Structures Registry
+File: data/registry/MegaStructure.java
+code
+Java
+package com.horizonpack.horizonsettlement.data.registry;
+
+import com.horizonpack.horizonsettlement.core.SettlementRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+public record MegaStructure(ResourceLocation id, String nameKey, int requiredWorkers, int completionTimeDays, String uniqueBonusKey, String requiredAgeId) {
+
+    public static void registerAll() {
+        register("pyramid", "mega.pyramid", 5000, 120, "bonus.horizonsettlement.pyramid_prestige", "copper_age");
+        register("great_wall", "mega.great_wall", 15000, 365, "bonus.horizonsettlement.wall_defense", "iron_age");
+        register("colosseum", "mega.colosseum", 8000, 180, "bonus.horizonsettlement.colosseum_happiness", "iron_age");
+        register("cathedral", "mega.cathedral", 3000, 250, "bonus.horizonsettlement.cathedral_faith", "medieval");
+        register("palace", "mega.palace", 4000, 150, "bonus.horizonsettlement.palace_authority", "medieval");
+        register("lighthouse", "mega.lighthouse", 1000, 60, "bonus.horizonsettlement.lighthouse_trade", "bronze_age");
+        register("aqueduct_major", "mega.aqueduct_major", 6000, 200, "bonus.horizonsettlement.aqueduct_health", "iron_age");
+        register("space_elevator", "mega.space_elevator", 50000, 1000, "bonus.horizonsettlement.elevator_space", "future");
+        register("orbital_station", "mega.orbital_station", 20000, 800, "bonus.horizonsettlement.orbital_science", "modern");
+    }
+
+    private static void register(String id, String key, int workers, int days, String bonus, String age) {
+        SettlementRegistries.MEGA_STRUCTURES.register(id, () -> new MegaStructure(
+            ResourceLocation.fromNamespaceAndPath("horizonsettlement", id), key, workers, days, bonus, age));
+    }
+}
+Total Mega-Structures registered: 9
+9. Urban Planning & Zoning Engine
+File: systems/UrbanZoningEngine.java
+Manages 2D chunk-based zoning. Interacts with the ZoningToolItem and stores mapped zones inside SettlementSavedData.
+code
+Java
+package com.horizonpack.horizonsettlement.systems;
+
+import com.horizonpack.horizonsettlement.data.SettlementSavedData;
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.player.Player;
+import java.util.UUID;
+
+public class UrbanZoningEngine {
+
+    public static void init() {}
+
+    /**
+     * Designates a 16x16 chunk area as a specific City District.
+     */
+    public static void zoneDistrict(ServerLevel level, BlockPos pos, ResourceLocation districtId, UUID civilizationId, Player player) {
+        SettlementSavedData data = SettlementSavedData.get(level);
+        
+        long chunkKey = (long)(pos.getX() >> 4) << 32 | (pos.getZ() >> 4 & 0xFFFFFFFFL);
+        data.setDistrict(chunkKey, districtId, civilizationId);
+        
+        // Notify Horizonsociety that a new district was zoned, which updates pop caps
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new com.horizonpack.horizonsettlement.events.custom.DistrictFormedEvent(level, chunkKey, districtId, civilizationId));
+        
+        player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.horizonsettlement.district_zoned", districtId.getPath()), true);
+    }
+
+    /**
+     * Evaluates land value and gentrification forces. Called daily by HorizonCore's DayAdvanceEvent.
+     */
+    public static void tickZoning(ServerLevel level) {
+        SettlementSavedData data = SettlementSavedData.get(level);
+        
+        data.getAllDistricts().forEach((chunkKey, districtId) -> {
+            float baseValue = getDistrictValue(level, districtId);
+            float infrastructureScore = UtilityNetworkEngine.evaluateInfrastructure(level, chunkKey);
+            
+            float newValue = baseValue * (1.0f + infrastructureScore);
+            data.setLandValue(chunkKey, newValue);
+            
+            // If land value exceeds slum threshold significantly, trigger gentrification
+            if (districtId.getPath().equals("slum") && newValue > 2.0f) {
+                data.setDistrict(chunkKey, ResourceLocation.fromNamespaceAndPath("horizonsettlement", "residential"), null);
+            }
+        });
+    }
+
+    private static float getDistrictValue(ServerLevel level, ResourceLocation districtId) {
+        var district = level.registryAccess().registryOrThrow(com.horizonpack.horizonsettlement.core.SettlementRegistries.DISTRICT_KEY).get(districtId);
+        return district != null ? district.propertyValueMultiplier() : 1.0f;
+    }
+}
+10. Construction & Scaffolding System
+File: systems/ConstructionEngine.java
+Handles the progressive building of structures. NPC builders (from HorizonSociety) or players supply materials to a ConstructionSiteBlockEntity.
+code
+Java
+package com.horizonpack.horizonsettlement.systems;
+
+import com.horizonpack.horizonsettlement.blockentities.ConstructionSiteBlockEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+
+public class ConstructionEngine {
+
+    public static void init() {}
+
+    /**
+     * Processes ticks on construction sites. Converts stored materials into placed blocks.
+     */
+    public static void tickConstructionSite(ServerLevel level, BlockPos pos, ConstructionSiteBlockEntity be) {
+        if (be.isComplete()) return;
+
+        // Requires active labor from players or assigned NPC workers
+        if (be.getActiveWorkers() > 0) {
+            be.advanceProgress(be.getActiveWorkers());
+            
+            if (be.readyForNextBlock()) {
+                BlockPos targetPos = be.getNextBlueprintPosition();
+                ItemStack requiredMaterial = be.getRequiredMaterialFor(targetPos);
+                
+                if (be.consumeMaterial(requiredMaterial)) {
+                    // Place scaffolding temporarily if above ground
+                    if (targetPos.getY() > pos.getY() + 2) {
+                        level.setBlock(targetPos.below(), com.horizonpack.horizonsettlement.core.SettlementRegistries.SCAFFOLDING_BLOCK.get().defaultBlockState(), 3);
+                    }
+                    
+                    // Place the actual block
+                    level.setBlock(targetPos, be.getBlockStateFor(targetPos), 3);
+                    be.markBlockPlaced(targetPos);
+                } else {
+                    // Halt construction, missing materials
+                    be.setStatus("Waiting for materials: " + requiredMaterial.getHoverName().getString());
+                }
+            }
+            
+            if (be.checkCompletion()) {
+                // Cleanup scaffolding
+                cleanupScaffolding(level, pos, be.getBounds());
+                level.removeBlock(pos, false); // Remove the construction site block
+            }
+        }
+    }
+    
+    private static void cleanupScaffolding(ServerLevel level, BlockPos origin, net.minecraft.world.phys.AABB bounds) {
+        BlockPos.betweenClosedStream(bounds).forEach(p -> {
+            if (level.getBlockState(p).is(com.horizonpack.horizonsettlement.core.SettlementRegistries.SCAFFOLDING_BLOCK.get())) {
+                level.removeBlock(p, false);
+            }
+        });
+    }
+}
+11. Infrastructure & Utility Engine
+File: systems/UtilityNetworkEngine.java
+Creates graph-based networks for water, sewage, and electricity traversing UtilityNodeBlockEntity objects.
+code
+Java
+package com.horizonpack.horizonsettlement.systems;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.ArrayDeque;
+import java.util.Queue;
+
+public class UtilityNetworkEngine {
+
+    public static void init() {}
+
+    /**
+     * Returns a 0.0 to 1.0 score based on water, sewer, and power access.
+     */
+    public static float evaluateInfrastructure(ServerLevel level, long chunkKey) {
+        int x = (int) (chunkKey >> 32) * 16 + 8;
+        int z = (int) chunkKey * 16 + 8;
+        BlockPos center = new BlockPos(x, 64, z);
+        
+        boolean hasWater = hasUtilityAccess(level, center, "water", 32);
+        boolean hasSewer = hasUtilityAccess(level, center, "sewer", 32);
+        boolean hasPower = hasUtilityAccess(level, center, "power", 64);
+        
+        float score = 0.0f;
+        if (hasWater) score += 0.4f;
+        if (hasSewer) score += 0.3f;
+        if (hasPower) score += 0.3f;
+        
+        return score;
+    }
+
+    private static boolean hasUtilityAccess(ServerLevel level, BlockPos pos, String utilityType, int radius) {
+        // Simplified BFS search for UtilityNodeBlockEntity matching the type
+        Set<BlockPos> visited = new HashSet<>();
+        Queue<BlockPos> queue = new ArrayDeque<>();
+        queue.add(pos);
+        
+        int steps = 0;
+        while(!queue.isEmpty() && steps < radius) {
+            BlockPos current = queue.poll();
+            if (visited.contains(current)) continue;
+            visited.add(current);
+            steps++;
+            
+            net.minecraft.world.level.block.entity.BlockEntity be = level.getBlockEntity(current);
+            if (be instanceof com.horizonpack.horizonsettlement.blockentities.UtilityNodeBlockEntity node) {
+                if (node.provides(utilityType)) return true;
+            }
+            
+            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                queue.add(current.relative(dir));
+            }
+        }
+        return false;
+    }
+}
+12. World SavedData (Settlement State)
+File: data/SettlementSavedData.java
+code
+Java
+package com.horizonpack.horizonsettlement.data;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+public class SettlementSavedData extends SavedData {
+
+    public static final String DATA_NAME = "horizonsettlement_state";
+
+    // ChunkKey -> District ID
+    private final Map<Long, ResourceLocation> zonedDistricts = new HashMap<>();
+    // ChunkKey -> Civ UUID
+    private final Map<Long, UUID> districtOwners = new HashMap<>();
+    // ChunkKey -> Land Value float
+    private final Map<Long, Float> landValues = new HashMap<>();
+
+    public static SettlementSavedData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(SettlementSavedData::new, SettlementSavedData::load),
+                DATA_NAME
+        );
+    }
+
+    public void setDistrict(long chunkKey, ResourceLocation districtId, UUID ownerId) {
+        zonedDistricts.put(chunkKey, districtId);
+        if (ownerId != null) districtOwners.put(chunkKey, ownerId);
+        setDirty();
+    }
+
+    public Map<Long, ResourceLocation> getAllDistricts() {
+        return zonedDistricts;
+    }
+
+    public void setLandValue(long chunkKey, float value) {
+        landValues.put(chunkKey, value);
+        setDirty();
+    }
+
+    @Override
+    public @NotNull CompoundTag save(@NotNull CompoundTag tag) {
+        ListTag zones = new ListTag();
+        zonedDistricts.forEach((chunkKey, districtId) -> {
+            CompoundTag zTag = new CompoundTag();
+            zTag.putLong("Chunk", chunkKey);
+            zTag.putString("District", districtId.toString());
+            if (districtOwners.containsKey(chunkKey)) zTag.putUUID("Owner", districtOwners.get(chunkKey));
+            if (landValues.containsKey(chunkKey)) zTag.putFloat("Value", landValues.get(chunkKey));
+            zones.add(zTag);
+        });
+        tag.put("Zoning", zones);
+        return tag;
+    }
+
+    public static SettlementSavedData load(CompoundTag tag) {
+        SettlementSavedData data = new SettlementSavedData();
+        ListTag zones = tag.getList("Zoning", Tag.TAG_COMPOUND);
+        for (int i = 0; i < zones.size(); i++) {
+            CompoundTag zTag = zones.getCompound(i);
+            long chunk = zTag.getLong("Chunk");
+            data.zonedDistricts.put(chunk, ResourceLocation.parse(zTag.getString("District")));
+            if (zTag.hasUUID("Owner")) data.districtOwners.put(chunk, zTag.getUUID("Owner"));
+            if (zTag.contains("Value")) data.landValues.put(chunk, zTag.getFloat("Value"));
+        }
+        return data;
+    }
+}
+13. Block Entities
+13.1 ConstructionSiteBlockEntity
+File: blockentities/ConstructionSiteBlockEntity.java
+Manages massive multi-block deliveries.
+code
+Java
+package com.horizonpack.horizonsettlement.blockentities;
+
+import com.horizonpack.horizonsettlement.core.SettlementRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ConstructionSiteBlockEntity extends BlockEntity {
+
+    private int activeWorkers = 0;
+    private int totalProgress = 0;
+    private int requiredProgress = 1000;
+    private String statusMsg = "Awaiting Blueprint";
+    private ResourceLocation blueprintId;
+
+    // Item ID string to count remaining
+    private final Map<String, Integer> requiredMaterials = new HashMap<>();
+
+    public ConstructionSiteBlockEntity(BlockPos pos, BlockState state) {
+        super(SettlementRegistries.CONSTRUCTION_SITE_BE.get(), pos, state);
+    }
+
+    public int getActiveWorkers() { return activeWorkers; }
+    public void setActiveWorkers(int count) { this.activeWorkers = count; }
+
+    public void advanceProgress(int amount) {
+        this.totalProgress += amount;
+        setChanged();
+    }
+
+    public boolean isComplete() { return totalProgress >= requiredProgress; }
+    
+    public boolean readyForNextBlock() {
+        return totalProgress % 10 == 0; // Places a block every 10 progress ticks
+    }
+
+    public BlockPos getNextBlueprintPosition() {
+        // Reads from loaded blueprint schematics. Returns a dummy pos here.
+        return this.worldPosition.above();
+    }
+
+    public ItemStack getRequiredMaterialFor(BlockPos pos) {
+        return new ItemStack(net.minecraft.world.level.block.Blocks.OAK_PLANKS);
+    }
+
+    public boolean consumeMaterial(ItemStack stack) {
+        String key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        if (requiredMaterials.getOrDefault(key, 0) > 0) {
+            requiredMaterials.put(key, requiredMaterials.get(key) - 1);
+            setChanged();
+            return true;
+        }
+        return false; // Not in local storage
+    }
+
+    public BlockState getBlockStateFor(BlockPos pos) {
+        return net.minecraft.world.level.block.Blocks.OAK_PLANKS.defaultBlockState();
+    }
+
+    public void markBlockPlaced(BlockPos pos) {}
+    
+    public void setStatus(String msg) {
+        this.statusMsg = msg;
+        setChanged();
+    }
+
+    public AABB getBounds() {
+        return new AABB(this.worldPosition).inflate(10); // Example 20x20x20 area
+    }
+
+    public boolean checkCompletion() {
+        return isComplete();
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putInt("Workers", activeWorkers);
+        tag.putInt("Progress", totalProgress);
+        tag.putInt("ReqProgress", requiredProgress);
+        tag.putString("Status", statusMsg);
+        
+        CompoundTag mats = new CompoundTag();
+        requiredMaterials.forEach(mats::putInt);
+        tag.put("Materials", mats);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        activeWorkers = tag.getInt("Workers");
+        totalProgress = tag.getInt("Progress");
+        requiredProgress = tag.getInt("ReqProgress");
+        statusMsg = tag.getString("Status");
+        
+        CompoundTag mats = tag.getCompound("Materials");
+        requiredMaterials.clear();
+        for (String key : mats.getAllKeys()) {
+            requiredMaterials.put(key, mats.getInt(key));
+        }
+    }
+}
+13.2 UtilityNodeBlockEntity
+File: blockentities/UtilityNodeBlockEntity.java
+Allows pipes and wires to register themselves as providers of water, sewer, or power.
+code
+Java
+package com.horizonpack.horizonsettlement.blockentities;
+
+import com.horizonpack.horizonsettlement.core.SettlementRegistries;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+public class UtilityNodeBlockEntity extends BlockEntity {
+
+    private boolean providesWater = false;
+    private boolean providesSewer = false;
+    private boolean providesPower = false;
+
+    public UtilityNodeBlockEntity(BlockPos pos, BlockState state) {
+        super(SettlementRegistries.UTILITY_NODE_BE.get(), pos, state);
+        
+        // Auto-configure based on the block type attached to this entity
+        if (state.is(SettlementRegistries.AQUEDUCT_CHANNEL.get())) providesWater = true;
+        if (state.is(SettlementRegistries.SEWER_PIPE.get())) providesSewer = true;
+        if (state.is(SettlementRegistries.ELECTRICAL_GRID_POLE.get())) providesPower = true;
+    }
+
+    public boolean provides(String type) {
+        return switch(type) {
+            case "water" -> providesWater;
+            case "sewer" -> providesSewer;
+            case "power" -> providesPower;
+            default -> false;
+        };
+    }
+
+    @Override
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        tag.putBoolean("Water", providesWater);
+        tag.putBoolean("Sewer", providesSewer);
+        tag.putBoolean("Power", providesPower);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        providesWater = tag.getBoolean("Water");
+        providesSewer = tag.getBoolean("Sewer");
+        providesPower = tag.getBoolean("Power");
+    }
+}
+14. Event Hooks
+File: events/SettlementEventHandlers.java
+code
+Java
+package com.horizonpack.horizonsettlement.events;
+
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizonsettlement.core.HorizonSettlement;
+import com.horizonpack.horizonsettlement.systems.UrbanZoningEngine;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+
+@Mod.EventBusSubscriber(modid = HorizonSettlement.MODID)
+public class SettlementEventHandlers {
+
+    private static int tickCounter = 0;
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        
+        tickCounter++;
+        // Tick construction sites every second
+        if (tickCounter % 20 == 0) {
+            // Locate construction sites in loaded chunks and call ConstructionEngine.tickConstructionSite()
+            // (Omitted iteration for brevity)
+        }
+        
+        if (tickCounter >= 24000) tickCounter = 0;
+    }
+
+    @SubscribeEvent
+    public static void onDayAdvance(DayAdvanceEvent event) {
+        if (event.level() instanceof ServerLevel level) {
+            // Run city zoning algorithms (land value adjustments)
+            UrbanZoningEngine.tickZoning(level);
+        }
+    }
+}
+15. Network Packets
+File: network/packets/SyncZoningDataPacket.java
+Pushes district coloration and data to the client's ZoningOverlayRenderer.
+code
+Java
+package com.horizonpack.horizonsettlement.network.packets;
+
+import com.horizonpack.horizonsettlement.core.HorizonSettlement;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+import java.util.Map;
+
+public record SyncZoningDataPacket(Map<Long, ResourceLocation> zonedDistricts) implements CustomPacketPayload {
+
+    public static final Type<SyncZoningDataPacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(HorizonSettlement.MODID, "sync_zoning"));
+
+    public static final StreamCodec<ByteBuf, SyncZoningDataPacket> STREAM_CODEC = StreamCodec.composite(
+        ByteBufCodecs.map(java.util.HashMap::new, ByteBufCodecs.VAR_LONG, ResourceLocation.STREAM_CODEC), SyncZoningDataPacket::zonedDistricts,
+        SyncZoningDataPacket::new
+    );
+
+    @Override
+    public Type<SyncZoningDataPacket> type() { return TYPE; }
+
+    public static void handleClient(SyncZoningDataPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            // Update local overlay cache
+        });
+    }
+}
+Packet Registration:
+code
+Java
+package com.horizonpack.horizonsettlement.network;
+
+import com.horizonpack.horizonsettlement.core.HorizonSettlement;
+import com.horizonpack.horizonsettlement.network.packets.SyncZoningDataPacket;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+
+public class SettlementPacketHandler {
+    public static void register(RegisterPayloadHandlersEvent event) {
+        PayloadRegistrar registrar = event.registrar(HorizonSettlement.MODID).versioned("1.0.0");
+        registrar.playToClient(SyncZoningDataPacket.TYPE, SyncZoningDataPacket.STREAM_CODEC, SyncZoningDataPacket::handleClient);
+    }
+}
+16. Configuration
+File: core/SettlementConfig.java
+code
+Java
+package com.horizonpack.horizonsettlement.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class SettlementConfig {
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+
+    public static class Common {
+        public final ModConfigSpec.DoubleValue constructionSpeedMultiplier;
+        public final ModConfigSpec.BooleanValue requireInfrastructure;
+        public final ModConfigSpec.IntValue maxMegaStructuresPerCiv;
+
+        Common(ModConfigSpec.Builder builder) {
+            builder.push("construction");
+            constructionSpeedMultiplier = builder.comment("Scales speed of NPC and Blueprint construction.").defineInRange("constructionSpeedMultiplier", 1.0, 0.1, 10.0);
+            requireInfrastructure = builder.comment("Districts without water/sewer/power suffer massive penalties.").define("requireInfrastructure", true);
+            maxMegaStructuresPerCiv = builder.comment("Limit on wonders built per civilization.").defineInRange("maxMegaStructuresPerCiv", 3, 1, 10);
+            builder.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showZoningOverlay;
+
+        Client(ModConfigSpec.Builder builder) {
+            builder.push("gui");
+            showZoningOverlay = builder.comment("Render colored chunk borders when holding Zoning Tool.").define("showZoningOverlay", true);
+            builder.pop();
+        }
+    }
+
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+}
+17. Data Pack Integration
+The Custom Registries (BuildingStyle, CityDistrict, InfrastructureType, MegaStructure) are implemented as dynamic RegistryBuilders with .sync(true). Pack developers can inject new building styles (like steampunk_arcology) directly into data/horizonsettlement/building_styles/steampunk_arcology.json.
+18. Blockstate & Model JSONs
+18.1 Construction Site Blockstate
+assets/horizonsettlement/blockstates/construction_site.json
+code
+JSON
+{
+  "variants": {
+    "": { "model": "horizonsettlement:block/construction_site" }
+  }
+}
+18.2 Construction Site Model
+assets/horizonsettlement/models/block/construction_site.json
+code
+JSON
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "bottom": "minecraft:block/oak_planks",
+    "top": "minecraft:block/yellow_concrete_powder",
+    "side": "minecraft:block/stripped_oak_log"
+  }
+}
+18.3 Scaffolding Block Model
+assets/horizonsettlement/models/block/scaffolding_block.json
+code
+JSON
+{
+  "parent": "minecraft:block/scaffolding_stable",
+  "textures": {
+    "bottom": "minecraft:block/scaffolding_bottom",
+    "top": "minecraft:block/scaffolding_top",
+    "side": "minecraft:block/scaffolding_side"
+  }
+}
+18.4 Zoning Tool Item Model
+assets/horizonsettlement/models/item/zoning_tool.json
+code
+JSON
+{
+  "parent": "minecraft:item/handheld",
+  "textures": {
+    "layer0": "horizonsettlement:item/zoning_tool"
+  }
+}
+19. Recipe JSONs
+19.1 Crafting: Blueprint Table
+data/horizonsettlement/recipes/blueprint_table.json
+code
+JSON
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    { "type": "horizoncore:age_condition", "required_age": "bronze_age" }
+  ],
+  "pattern": [
+    "PPP",
+    " S ",
+    "W W"
+  ],
+  "key": {
+    "P": { "item": "minecraft:paper" },
+    "S": { "item": "minecraft:stick" },
+    "W": { "item": "minecraft:oak_planks" }
+  },
+  "result": {
+    "id": "horizonsettlement:blueprint_table",
+    "count": 1
+  }
+}
+20. Loot Table JSONs
+20.1 Blueprint Table Drop
+data/horizonsettlement/loot_tables/blocks/blueprint_table.json
+code
+JSON
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "horizonsettlement:blueprint_table"
+        }
+      ],
+      "conditions": [
+        { "condition": "minecraft:survives_explosion" }
+      ]
+    }
+  ]
+}
+21. Tag JSONs
+21.1 Infrastructure Block Tag
+data/horizonsettlement/tags/blocks/infrastructure.json
+code
+JSON
+{
+  "replace": false,
+  "values": [
+    "horizonsettlement:sewer_pipe",
+    "horizonsettlement:aqueduct_channel",
+    "horizonsettlement:water_tower",
+    "horizonsettlement:electrical_grid_pole",
+    "horizonsettlement:fiber_cable_conduit",
+    "horizonsettlement:subway_tunnel"
+  ]
+}
+22. Lang / Localization
+assets/horizonsettlement/lang/en_us.json
+code
+JSON
+{
+  "itemGroup.horizonsettlement.planning": "HorizonSettlement - Planning & Infrastructure",
+
+  "block.horizonsettlement.construction_site": "Construction Site",
+  "block.horizonsettlement.blueprint_table": "Blueprint Table",
+  "block.horizonsettlement.scaffolding_block": "Heavy Scaffolding",
+  "block.horizonsettlement.sewer_pipe": "Sewer Pipe",
+  "block.horizonsettlement.aqueduct_channel": "Aqueduct Channel",
+  "block.horizonsettlement.water_tower": "Water Tower",
+  "block.horizonsettlement.electrical_grid_pole": "Electrical Grid Pole",
+  "block.horizonsettlement.fiber_cable_conduit": "Fiber Cable Conduit",
+  "block.horizonsettlement.subway_tunnel": "Subway Tunnel",
+  "block.horizonsettlement.zoning_marker": "Zoning Marker",
+
+  "item.horizonsettlement.blueprint": "Architectural Blueprint",
+  "item.horizonsettlement.zoning_tool": "Zoning Tool",
+  "item.horizonsettlement.inspector_clipboard": "Inspector's Clipboard",
+
+  "style.primitive_mud_hut": "Primitive Mud Hut",
+  "style.tent_camp": "Tent Camp",
+  "style.longhouse": "Longhouse",
+  "style.adobe_house": "Adobe House",
+  "style.timber_frame": "Timber Frame",
+  "style.stone_cottage": "Stone Cottage",
+  "style.roman_domus": "Roman Domus",
+  "style.medieval_townhouse": "Medieval Townhouse",
+  "style.gothic_cathedral": "Gothic Cathedral",
+  "style.renaissance_palazzo": "Renaissance Palazzo",
+  "style.baroque_mansion": "Baroque Mansion",
+  "style.industrial_tenement": "Industrial Tenement",
+  "style.modernist_apartment": "Modernist Apartment",
+  "style.skyscraper": "Skyscraper",
+
+  "district.residential": "Residential District",
+  "district.commercial": "Commercial District",
+  "district.industrial": "Industrial District",
+  "district.agricultural": "Agricultural District",
+  "district.military": "Military District",
+  "district.religious": "Religious District",
+  "district.academic": "Academic District",
+  "district.administrative": "Administrative District",
+  "district.slum": "Slum District",
+  "district.noble_quarter": "Noble Quarter",
+  "district.port_district": "Port District",
+  "district.market_district": "Market District",
+
+  "infra.dirt_road": "Dirt Road",
+  "infra.cobblestone_street": "Cobblestone Street",
+  "infra.paved_avenue": "Paved Avenue",
+  "infra.highway": "Highway",
+  "infra.aqueduct": "Aqueduct Network",
+  "infra.sewer_pipe": "Sewer Network",
+  "infra.water_tower": "Water Tower Network",
+  "infra.electrical_grid_pole": "Electrical Grid",
+  "infra.fiber_cable_conduit": "Fiber Optic Network",
+  "infra.subway_tunnel": "Subway Network",
+
+  "mega.pyramid": "Great Pyramid",
+  "mega.great_wall": "Great Wall",
+  "mega.colosseum": "Colosseum",
+  "mega.cathedral": "Grand Cathedral",
+  "mega.palace": "Imperial Palace",
+  "mega.lighthouse": "Great Lighthouse",
+  "mega.aqueduct_major": "Major Aqueduct System",
+  "mega.space_elevator": "Space Elevator",
+  "mega.orbital_station": "Orbital Station",
+
+  "message.horizonsettlement.district_zoned": "Zoned new district: %s",
+
+  "advancements.horizonsettlement.root.title": "City Planner",
+  "advancements.horizonsettlement.root.desc": "Zone your first city district.",
+  "advancements.horizonsettlement.mega.title": "Monumental Ambition",
+  "advancements.horizonsettlement.mega.desc": "Complete a Mega-Structure."
+}
+23. build.gradle
+code
+Gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version = '1.0.0'
+group = 'com.horizonpack.horizonsettlement'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    server {
+        workingDirectory project.file('run')
+        property 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
+    }
+    data {
+        workingDirectory project.file('run')
+        programArguments.addAll '--mod', 'horizonsettlement', '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        modSource project.sourceSets.main
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+
+    implementation "com.horizonpack:horizoncore:1.0.0"
+    implementation "com.horizonpack:horizondata:1.0.0"
+    implementation "com.horizonpack:horizonpower:1.0.0"
+    implementation "com.horizonpack:horizonsociety:1.0.0"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+24. neoforge.mods.toml
+code
+Toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId = "horizonsettlement"
+    version = "1.0.0"
+    displayName = "Horizon Settlement & Architecture"
+    description = """
+Implements city planning, architecture, and massive infrastructure networks for the Horizon Corebreach modpack. 
+Includes 14 building styles, 12 city districts, 10 infrastructure networks, and 9 mega-structures.
+"""
+    logoFile = "horizonsettlement.png"
+
+[[dependencies.horizonsettlement]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonsettlement]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.horizonsettlement]]
+    modId = "horizoncore"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsettlement]]
+    modId = "horizondata"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsettlement]]
+    modId = "horizonpower"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.horizonsettlement]]
+    modId = "horizonsociety"
+    type = "required"
+    versionRange = "[1.0.0,2.0.0)"
+    ordering = "AFTER"
+    side = "BOTH"
+25. Critical Implementation Notes
+Chunk-Based Zoning Serialization: UrbanZoningEngine maps districts via a long chunk key inside SettlementSavedData. To prevent severe memory bloat on large servers, only map chunks that are explicitly designated. Natural, un-zoned chunks simply return null and are treated as wilderness.
+Construction Site Processing Rate: A ConstructionSiteBlockEntity places physical blocks into the world. Firing level.setBlock continuously causes intense chunk meshing lag. The engine places blocks at a controlled modulus rate (totalProgress % 10 == 0), artificially spreading out rendering workload over several seconds.
+Scaffolding Cleanup: cleanupScaffolding uses a 3D volume scan BlockPos.betweenClosedStream(bounds) which can lock the main thread if the boundary is enormous (e.g., a skyscraper). Limit bounds lookup to 32x32x32 blocks per tick, saving state via NBT to resume cleanup on subsequent ticks.
+Utility Pathfinding Extent: The BFS search inside UtilityNetworkEngine.hasUtilityAccess checks a radius of 32-64 blocks. To prevent extreme lag spikes during zoning calculations, this BFS is restricted by a maximum step counter and only traverses block entities registered under the infrastructure tag, skipping solid non-utility blocks instantly.
+Gentrification Override Logic: The tickZoning function can autonomously rewrite a chunk's registered district ID (e.g., Slum -> Residential) based on infrastructure score. This requires pushing SyncZoningDataPacket to tracking clients immediately, or their client-side ZoningOverlayRenderer will fall out of sync with the server's land value representation.
+Mega-Structure Requirements: Mega-structures like the space_elevator define requirements of 50,000 workers. ConstructionEngine multiplies activeWorkers linearly to increment progress. If ConstructionSiteBlockEntity lacks a worker assignment pipeline (via horizonsociety NPC integration), a single player will take real-world months to finish the structure.
+Infrastructure Cross-Mod Connections: Blocks like electrical_grid_pole provide zoning utility points and simultaneously expose Capabilities.EnergyStorage.BLOCK from horizonpower. They are hybrid nodes. Do not create isolated networks; use the existing PowerGridNode logic to route RF, simply querying presence for the hasPower check.
+Blueprint Item NBT Data Components: The BlueprintItem holds schematic data defining what the ConstructionSiteBlockEntity must build. Under 1.21.1 rules, this data must be wrapped in a registered DataComponentType (e.g., horizonsettlement:schematic_data), avoiding the deprecated getOrCreateTag() method.

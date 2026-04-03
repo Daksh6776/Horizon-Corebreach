@@ -1,0 +1,26 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev'
+}
+
+base {
+    archivesName = 'horizonculture' // Change this for each folder
+}
+
+neoForge {
+    version = "21.1.65"
+
+    mods {
+        // Change this name to match the module (no spaces or dashes)
+        horizonbiome {
+            // THIS replaces the old "runs { modSource... }" block!
+            sourceSet project.sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    // CRITICAL: This tells Gradle that horizon_biome is allowed to use
+    // code, registries, and items from your main horizon_core module!
+    implementation project(':horizon_core')
+}

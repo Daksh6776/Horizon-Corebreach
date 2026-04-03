@@ -1,0 +1,2164 @@
+# HorizonCore — Detailed Technical Specification
+**Mod ID:** `horizoncore`  
+**Version:** 1.0.0  
+**Platform:** NeoForge 1.21.1 / Java 21  
+**Role:** Foundation API — required by all other Horizon mods  
+**Absorbed mods:** HorizonCore, HorizonAges, HorizonTech, HorizonScience, HorizonEducation
+
+---
+
+## Table of Contents
+1. [Overview & Responsibilities](#1-overview--responsibilities)
+2. [File & Package Structure](#2-file--package-structure)
+3. [Mod Entry Point](#3-mod-entry-point)
+4. [Custom Registries](#4-custom-registries)
+5. [Age & Era System](#5-age--era-system)
+6. [Technology Tree](#6-technology-tree)
+7. [Skill System](#7-skill-system)
+8. [Science & Research System](#8-science--research-system)
+9. [Education System](#9-education-system)
+10. [Player Capability](#10-player-capability)
+11. [World SavedData](#11-world-saveddata)
+12. [Event System](#12-event-system)
+13. [Network Packets](#13-network-packets)
+14. [HUD & Client Rendering](#14-hud--client-rendering)
+15. [Configuration](#15-configuration)
+16. [Data Pack Integration](#16-data-pack-integration)
+17. [Lang / Localization](#17-lang--localization)
+18. [build.gradle](#18-buildgradle)
+19. [neoforge.mods.toml](#19-neoforgemodstom)
+20. [Critical Implementation Notes](#20-critical-implementation-notes)
+
+---
+
+## 1. Overview & Responsibilities
+
+HorizonCore is the **single required dependency** of every other Horizon mod. It provides:
+
+- A **central event bus bridge** so sub-mods communicate without direct class references
+- **Custom registries** for technologies, skills, professions, nutrients, diseases, weather types, and disasters
+- The **Age/Era progression system** (Stone → Copper → Bronze → Iron → Medieval → Industrial → Modern)
+- The **Technology Tree** — a directed acyclic graph of researchable technologies gated behind age, resources, and prerequisite techs
+- The **Skill system** — per-player XP-based leveling across dozens of practical disciplines
+- The **Science & Research system** — laboratory research that consumes time and materials to unlock advances
+- The **Education system** — institutions (apprenticeships, schools, universities, labs) that accelerate research and skill gain
+- The **player capability** (`IHorizonPlayerData`) — the single NBT-serializable object attached to every player storing nutrition, skills, unlocked techs, body temperature, language proficiencies, and more
+- **World-level SavedData** (`WorldAgeData`) tracking global day count, per-civilization days, and per-settlement age overrides
+- All **cross-mod events** that sub-mods fire and listen to
+- **Network packets** for syncing capability data to the client
+- The **HUD overlay** showing age, active buffs/debuffs, and key stats
+
+---
+
+## 2. File & Package Structure
+
+```
+horizon_core/
+├── src/main/java/com/horizonpack/horizoncore/
+│   ├── core/
+│   │   ├── HorizonCore.java                  ← @Mod entry point
+│   │   ├── HorizonRegistries.java            ← All DeferredRegisters + Registry keys
+│   │   └── HorizonConfig.java                ← ModConfigSpec (common + client)
+│   ├── data/
+│   │   ├── HorizonAge.java                   ← Enum: 7 ages with day ranges
+│   │   ├── WorldAgeData.java                 ← SavedData: global day, civ days, settlement ages
+│   │   ├── TechnologyData.java               ← Data object: tech node definition
+│   │   ├── TechnologyGraph.java              ← DAG of all technologies
+│   │   ├── ResearchProject.java              ← In-progress research instance
+│   │   ├── SkillType.java                    ← Enum: all skill disciplines
+│   │   ├── SkillDefinition.java              ← Data: XP table, max level, unlock effects
+│   │   ├── Profession.java                   ← Data: profession definition
+│   │   ├── NutrientType.java                 ← Enum: protein/carbs/fat/fiber/water
+│   │   ├── VitaminType.java                  ← Enum: A/B/C/D/E/K
+│   │   ├── MineralType.java                  ← Enum: iron/calcium/potassium/etc
+│   │   ├── DiseaseType.java                  ← Data: disease definition
+│   │   ├── WeatherType.java                  ← Data: weather definition
+│   │   └── DisasterType.java                 ← Data: disaster definition
+│   ├── capabilities/
+│   │   ├── IHorizonPlayerData.java           ← Interface: full player data contract
+│   │   ├── HorizonPlayerData.java            ← Implementation + NBT serialization
+│   │   └── HorizonCapabilities.java          ← EntityCapability registration
+│   ├── events/
+│   │   ├── HorizonEventHandlers.java         ← PlayerTick, Clone, Login handlers
+│   │   └── custom/
+│   │       ├── AgeAdvancementEvent.java      ← Fired on age change (cancellable)
+│   │       ├── TechnologyUnlockEvent.java    ← Fired when tech is researched
+│   │       ├── SkillLevelUpEvent.java        ← Fired when skill gains a level
+│   │       ├── ResearchCompleteEvent.java    ← Fired when a research project finishes
+│   │       ├── DayAdvanceEvent.java          ← Fired every in-game day
+│   │       └── HorizonPlayerDataEvent.java   ← Generic capability change hook
+│   ├── network/
+│   │   ├── HorizonPacketHandler.java         ← RegisterPayloadHandlerEvent setup
+│   │   └── packets/
+│   │       ├── SyncPlayerDataPacket.java     ← Full capability sync S→C
+│   │       ├── SyncAgePacket.java            ← Age change notification S→C
+│   │       ├── TechUnlockPacket.java         ← Tech unlock notification S→C
+│   │       ├── SkillUpdatePacket.java        ← Skill XP/level update S→C
+│   │       └── RequestResearchPacket.java    ← Player starts research C→S
+│   ├── blocks/
+│   │   ├── ResearchBenchBlock.java           ← Multi-block research station
+│   │   ├── LibraryBlock.java                 ← Research speed aura block
+│   │   ├── UniversityBlock.java              ← Advanced education block
+│   │   └── LaboratoryBlock.java              ← Science research block
+│   ├── blockentities/
+│   │   ├── ResearchBenchBlockEntity.java     ← Holds active ResearchProject, item slots
+│   │   ├── LibraryBlockEntity.java           ← Tracks stored books, radius bonus
+│   │   ├── UniversityBlockEntity.java        ← Manages enrolled players
+│   │   └── LaboratoryBlockEntity.java        ← Manages experiments in progress
+│   ├── items/
+│   │   ├── TechScrollItem.java               ← Craftable item to unlock specific tech
+│   │   ├── ResearchNoteItem.java             ← Written item: partial research progress
+│   │   └── SkillBookItem.java                ← Grants XP in a skill on use
+│   ├── client/
+│   │   ├── gui/
+│   │   │   ├── HorizonHudOverlay.java        ← Age indicator, stat bars
+│   │   │   ├── TechTreeScreen.java           ← Full-screen tech DAG viewer
+│   │   │   ├── ResearchBenchScreen.java      ← Research station GUI
+│   │   │   └── SkillBookScreen.java          ← Per-player skill viewer
+│   │   └── render/
+│   │       └── HorizonBlockEntityRenderer.java
+│   └── utils/
+│       ├── HorizonMath.java                  ← Shared math helpers
+│       ├── HorizonNbt.java                   ← NBT read/write helpers
+│       └── AgeRecipeCondition.java           ← ICondition: gates recipes by age
+├── src/main/resources/
+│   ├── META-INF/neoforge.mods.toml
+│   ├── assets/horizoncore/
+│   │   ├── blockstates/
+│   │   │   ├── research_bench.json
+│   │   │   ├── library.json
+│   │   │   ├── university.json
+│   │   │   └── laboratory.json
+│   │   ├── models/block/
+│   │   │   ├── research_bench.json
+│   │   │   ├── library.json
+│   │   │   ├── university.json
+│   │   │   └── laboratory.json
+│   │   ├── models/item/
+│   │   │   ├── research_bench.json
+│   │   │   ├── library.json
+│   │   │   ├── tech_scroll.json
+│   │   │   ├── research_note.json
+│   │   │   └── skill_book.json
+│   │   ├── textures/block/
+│   │   │   ├── research_bench_top.png        ← 16x16
+│   │   │   ├── research_bench_side.png       ← 16x16
+│   │   │   ├── research_bench_front.png      ← 16x16
+│   │   │   ├── library_top.png
+│   │   │   ├── library_side.png
+│   │   │   ├── university_top.png
+│   │   │   ├── university_side.png
+│   │   │   ├── laboratory_top.png
+│   │   │   └── laboratory_side.png
+│   │   ├── textures/item/
+│   │   │   ├── tech_scroll.png               ← 16x16
+│   │   │   ├── research_note.png             ← 16x16
+│   │   │   └── skill_book.png                ← 16x16
+│   │   ├── textures/gui/
+│   │   │   ├── tech_tree_bg.png              ← 512x256 tech tree background
+│   │   │   ├── research_bench_gui.png        ← 176x166 standard GUI
+│   │   │   └── hud_elements.png              ← 256x256 HUD sprite sheet
+│   │   └── lang/en_us.json
+│   └── data/horizoncore/
+│       ├── recipes/
+│       │   ├── research_bench.json
+│       │   ├── library.json
+│       │   ├── university.json
+│       │   └── laboratory.json
+│       ├── loot_tables/blocks/
+│       │   ├── research_bench.json
+│       │   ├── library.json
+│       │   ├── university.json
+│       │   └── laboratory.json
+│       ├── tags/blocks/
+│       │   └── horizon_workstations.json
+│       ├── tags/items/
+│       │   ├── horizon_workstations.json
+│       │   └── research_materials.json
+│       ├── advancements/
+│       │   ├── root.json                     ← "Welcome to the Stone Age"
+│       │   ├── first_tech.json               ← First technology unlocked
+│       │   ├── bronze_age.json               ← Reach Bronze Age
+│       │   └── modern_age.json               ← Reach Modern Era
+│       └── horizon_technologies/             ← JSON data files for each tech node
+│           ├── stone_age/
+│           │   ├── fire_making.json
+│           │   ├── flint_knapping.json
+│           │   ├── basket_weaving.json
+│           │   ├── primitive_pottery.json
+│           │   └── cave_painting.json
+│           ├── copper_age/
+│           │   ├── copper_smelting.json
+│           │   ├── basic_agriculture.json
+│           │   ├── pottery_wheel.json
+│           │   └── basic_sailing.json
+│           ├── bronze_age/
+│           │   ├── bronze_alloy.json
+│           │   ├── writing.json
+│           │   └── animal_domestication.json
+│           ├── iron_age/
+│           │   ├── iron_smelting.json
+│           │   ├── steel_production.json
+│           │   ├── advanced_agriculture.json
+│           │   └── trade_networks.json
+│           ├── medieval/
+│           │   ├── windmills.json
+│           │   ├── advanced_metallurgy.json
+│           │   ├── universities.json
+│           │   ├── mechanical_clocks.json
+│           │   └── crop_rotation.json
+│           ├── industrial/
+│           │   ├── steam_power.json
+│           │   ├── coal_processing.json
+│           │   ├── railways.json
+│           │   ├── telegraph.json
+│           │   └── modern_medicine.json
+│           └── modern/
+│               ├── internal_combustion.json
+│               ├── electronics.json
+│               ├── nuclear_power.json
+│               ├── telecommunications.json
+│               └── space_exploration.json
+└── build.gradle
+```
+
+---
+
+## 3. Mod Entry Point
+
+**File:** `core/HorizonCore.java`
+
+```java
+package com.horizonpack.horizoncore.core;
+
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+@Mod(HorizonCore.MODID)
+public class HorizonCore {
+    public static final String MODID = "horizoncore";
+    public static final String VERSION = "1.0.0";
+
+    public HorizonCore(IEventBus modEventBus, ModContainer modContainer) {
+        // Register configs
+        modContainer.registerConfig(ModConfig.Type.COMMON, HorizonConfig.COMMON_SPEC);
+        modContainer.registerConfig(ModConfig.Type.CLIENT, HorizonConfig.CLIENT_SPEC);
+
+        // Register all deferred registers onto the mod event bus
+        HorizonRegistries.TECHNOLOGIES.register(modEventBus);
+        HorizonRegistries.SKILLS.register(modEventBus);
+        HorizonRegistries.PROFESSIONS.register(modEventBus);
+        HorizonRegistries.NUTRIENTS.register(modEventBus);
+        HorizonRegistries.DISEASES.register(modEventBus);
+        HorizonRegistries.WEATHER_TYPES.register(modEventBus);
+        HorizonRegistries.DISASTERS.register(modEventBus);
+        HorizonRegistries.BLOCKS.register(modEventBus);
+        HorizonRegistries.BLOCK_ENTITIES.register(modEventBus);
+        HorizonRegistries.ITEMS.register(modEventBus);
+        HorizonRegistries.MENU_TYPES.register(modEventBus);
+
+        // Lifecycle listeners on the mod bus
+        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(HorizonCapabilities::register);
+        modEventBus.addListener(HorizonPacketHandler::register);
+
+        // Game event listeners on the NeoForge bus
+        NeoForge.EVENT_BUS.register(HorizonEventHandlers.class);
+    }
+
+    private void commonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            HorizonRegistries.init();
+            TechnologyGraph.buildGraph();     // Build the DAG after all techs are registered
+        });
+    }
+}
+```
+
+---
+
+## 4. Custom Registries
+
+**File:** `core/HorizonRegistries.java`
+
+All custom object types have their own `DeferredRegister`. Every Horizon sub-mod adds entries to these registries by depending on HorizonCore.
+
+```java
+package com.horizonpack.horizoncore.core;
+
+import com.horizonpack.horizoncore.blocks.*;
+import com.horizonpack.horizoncore.blockentities.*;
+import com.horizonpack.horizoncore.items.*;
+import com.horizonpack.horizoncore.data.*;
+import net.minecraft.core.Registry;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.NeoForgeRegistries;
+
+public class HorizonRegistries {
+
+    // ── Custom registry keys ──────────────────────────────────────────────────
+    public static final ResourceKey<Registry<TechnologyData>> TECHNOLOGY_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "technologies"));
+
+    public static final ResourceKey<Registry<SkillDefinition>> SKILL_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "skills"));
+
+    public static final ResourceKey<Registry<Profession>> PROFESSION_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "professions"));
+
+    public static final ResourceKey<Registry<NutrientType>> NUTRIENT_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "nutrients"));
+
+    public static final ResourceKey<Registry<DiseaseType>> DISEASE_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "diseases"));
+
+    public static final ResourceKey<Registry<WeatherType>> WEATHER_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "weather_types"));
+
+    public static final ResourceKey<Registry<DisasterType>> DISASTER_REGISTRY_KEY =
+        ResourceKey.createRegistryKey(new ResourceLocation(HorizonCore.MODID, "disasters"));
+
+    // ── Deferred registers for custom types ──────────────────────────────────
+    public static final DeferredRegister<TechnologyData> TECHNOLOGIES =
+        DeferredRegister.create(TECHNOLOGY_REGISTRY_KEY, HorizonCore.MODID);
+
+    public static final DeferredRegister<SkillDefinition> SKILLS =
+        DeferredRegister.create(SKILL_REGISTRY_KEY, HorizonCore.MODID);
+
+    public static final DeferredRegister<Profession> PROFESSIONS =
+        DeferredRegister.create(PROFESSION_REGISTRY_KEY, HorizonCore.MODID);
+
+    public static final DeferredRegister<NutrientType> NUTRIENTS =
+        DeferredRegister.create(NUTRIENT_REGISTRY_KEY, HorizonCore.MODID);
+
+    public static final DeferredRegister<DiseaseType> DISEASES =
+        DeferredRegister.create(DISEASE_REGISTRY_KEY, HorizonCore.MODID);
+
+    public static final DeferredRegister<WeatherType> WEATHER_TYPES =
+        DeferredRegister.create(WEATHER_REGISTRY_KEY, HorizonCore.MODID);
+
+    public static final DeferredRegister<DisasterType> DISASTERS =
+        DeferredRegister.create(DISASTER_REGISTRY_KEY, HorizonCore.MODID);
+
+    // ── Vanilla-backed deferred registers ────────────────────────────────────
+    public static final DeferredRegister<Block> BLOCKS =
+        DeferredRegister.create(net.minecraft.core.registries.Registries.BLOCK, HorizonCore.MODID);
+
+    public static final DeferredRegister<Item> ITEMS =
+        DeferredRegister.create(net.minecraft.core.registries.Registries.ITEM, HorizonCore.MODID);
+
+    public static final DeferredRegister<BlockEntityType<?>> BLOCK_ENTITIES =
+        DeferredRegister.create(net.minecraft.core.registries.Registries.BLOCK_ENTITY_TYPE, HorizonCore.MODID);
+
+    public static final DeferredRegister<MenuType<?>> MENU_TYPES =
+        DeferredRegister.create(net.minecraft.core.registries.Registries.MENU, HorizonCore.MODID);
+
+    // ── Block registrations ───────────────────────────────────────────────────
+    public static final var RESEARCH_BENCH = BLOCKS.register("research_bench",
+        () -> new ResearchBenchBlock(Block.Properties.of()
+            .strength(2.5f, 6.0f)
+            .requiresCorrectToolForDrops()
+            .noOcclusion()));
+
+    public static final var LIBRARY = BLOCKS.register("library",
+        () -> new LibraryBlock(Block.Properties.of()
+            .strength(2.0f, 5.0f)
+            .requiresCorrectToolForDrops()));
+
+    public static final var UNIVERSITY = BLOCKS.register("university",
+        () -> new UniversityBlock(Block.Properties.of()
+            .strength(3.0f, 8.0f)
+            .requiresCorrectToolForDrops()
+            .noOcclusion()));
+
+    public static final var LABORATORY = BLOCKS.register("laboratory",
+        () -> new LaboratoryBlock(Block.Properties.of()
+            .strength(2.5f, 6.0f)
+            .requiresCorrectToolForDrops()
+            .noOcclusion()));
+
+    // ── Item registrations ────────────────────────────────────────────────────
+    public static final var RESEARCH_BENCH_ITEM = ITEMS.register("research_bench",
+        () -> new net.minecraft.world.item.BlockItem(RESEARCH_BENCH.get(),
+            new Item.Properties().stacksTo(1)));
+
+    public static final var LIBRARY_ITEM = ITEMS.register("library",
+        () -> new net.minecraft.world.item.BlockItem(LIBRARY.get(),
+            new Item.Properties().stacksTo(1)));
+
+    public static final var UNIVERSITY_ITEM = ITEMS.register("university",
+        () -> new net.minecraft.world.item.BlockItem(UNIVERSITY.get(),
+            new Item.Properties().stacksTo(1)));
+
+    public static final var LABORATORY_ITEM = ITEMS.register("laboratory",
+        () -> new net.minecraft.world.item.BlockItem(LABORATORY.get(),
+            new Item.Properties().stacksTo(1)));
+
+    public static final var TECH_SCROLL = ITEMS.register("tech_scroll",
+        () -> new TechScrollItem(new Item.Properties().stacksTo(16)));
+
+    public static final var RESEARCH_NOTE = ITEMS.register("research_note",
+        () -> new ResearchNoteItem(new Item.Properties().stacksTo(1)));
+
+    public static final var SKILL_BOOK = ITEMS.register("skill_book",
+        () -> new SkillBookItem(new Item.Properties().stacksTo(1)));
+
+    // ── BlockEntity registrations ─────────────────────────────────────────────
+    public static final var RESEARCH_BENCH_BE = BLOCK_ENTITIES.register("research_bench",
+        () -> BlockEntityType.Builder.of(ResearchBenchBlockEntity::new,
+            RESEARCH_BENCH.get()).build(null));
+
+    public static final var LIBRARY_BE = BLOCK_ENTITIES.register("library",
+        () -> BlockEntityType.Builder.of(LibraryBlockEntity::new,
+            LIBRARY.get()).build(null));
+
+    public static final var UNIVERSITY_BE = BLOCK_ENTITIES.register("university",
+        () -> BlockEntityType.Builder.of(UniversityBlockEntity::new,
+            UNIVERSITY.get()).build(null));
+
+    public static final var LABORATORY_BE = BLOCK_ENTITIES.register("laboratory",
+        () -> BlockEntityType.Builder.of(LaboratoryBlockEntity::new,
+            LABORATORY.get()).build(null));
+
+    public static void init() {
+        // Registries are fully built. Initialize lookup caches here.
+    }
+}
+```
+
+---
+
+## 5. Age & Era System
+
+### 5.1 HorizonAge Enum
+
+**File:** `data/HorizonAge.java`
+
+The seven ages of civilization. Each age has a day range, a string ID for serialization, a human-readable display name, and a list of gameplay restrictions it lifts.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.util.StringRepresentable;
+
+public enum HorizonAge implements StringRepresentable {
+    // id,           startDay, endDay,  serialId,      displayName
+    STONE_AGE       (0,        5000,    "stone_age",   "Stone Age"),
+    COPPER_AGE      (5000,     10000,   "copper_age",  "Copper Age"),
+    BRONZE_AGE      (10000,    15000,   "bronze_age",  "Bronze Age"),
+    IRON_AGE        (15000,    30000,   "iron_age",    "Iron Age"),
+    MEDIEVAL        (30000,    50000,   "medieval",    "Medieval Era"),
+    INDUSTRIAL      (50000,    75000,   "industrial",  "Industrial Revolution"),
+    MODERN          (75000,    Integer.MAX_VALUE, "modern", "Modern Era");
+
+    private final int startDay;
+    private final int endDay;
+    private final String id;
+    private final String displayName;
+
+    HorizonAge(int startDay, int endDay, String id, String displayName) {
+        this.startDay = startDay;
+        this.endDay   = endDay;
+        this.id       = id;
+        this.displayName = displayName;
+    }
+
+    /** Returns the age that corresponds to a given global day count. */
+    public static HorizonAge fromDay(int day) {
+        for (HorizonAge age : values()) {
+            if (day >= age.startDay && day < age.endDay) return age;
+        }
+        return MODERN;
+    }
+
+    /** True if this age is at least as advanced as the required age. */
+    public boolean isAtLeast(HorizonAge required) {
+        return this.ordinal() >= required.ordinal();
+    }
+
+    /** True if this age is strictly before the given age. */
+    public boolean isBefore(HorizonAge other) {
+        return this.ordinal() < other.ordinal();
+    }
+
+    public int getStartDay()      { return startDay; }
+    public int getEndDay()        { return endDay; }
+    public String getDisplayName(){ return displayName; }
+    public int getDaySpan()       { return endDay == Integer.MAX_VALUE ? -1 : endDay - startDay; }
+
+    @Override
+    public String getSerializedName() { return id; }
+}
+```
+
+### 5.2 Age Transition Logic
+
+The global age is computed purely from the day counter held in `WorldAgeData`. When a new day ticks and the day crosses an age threshold, an `AgeAdvancementEvent` is fired on the NeoForge event bus. All other mods listen to that event and update their own state (unlocking new crafting stations, new mob spawns, new biome features, etc.).
+
+Individual civilizations and settlements can be ahead of or behind the global age. `WorldAgeData` stores their own day counters independently.
+
+**Age config multiplier:** `daysPerAgeMultiplier` in `common.toml` scales all `startDay`/`endDay` values at runtime, allowing server admins to speed up or slow down progression.
+
+### 5.3 Age-Gated Recipe Condition
+
+**File:** `utils/AgeRecipeCondition.java`
+
+Recipes in any Horizon mod can include a condition that prevents them from appearing unless the world is at or above a required age.
+
+```java
+package com.horizonpack.horizoncore.utils;
+
+import com.horizonpack.horizoncore.data.HorizonAge;
+import com.horizonpack.horizoncore.data.WorldAgeData;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.neoforged.neoforge.common.conditions.ICondition;
+
+public record AgeRecipeCondition(HorizonAge requiredAge) implements ICondition {
+
+    public static final Codec<AgeRecipeCondition> CODEC = RecordCodecBuilder.create(inst -> inst.group(
+        HorizonAge.CODEC.fieldOf("required_age").forGetter(AgeRecipeCondition::requiredAge)
+    ).apply(inst, AgeRecipeCondition::new));
+
+    @Override
+    public boolean test(IContext context) {
+        // Evaluated on the server when the recipe manager is built
+        // WorldAgeData is not available during datagen; return true in datagen context
+        if (context == ICondition.IContext.EMPTY) return true;
+        var level = context.getLevel();
+        if (level == null) return true;
+        return WorldAgeData.get(level.getServer().overworld())
+                           .getGlobalAge()
+                           .isAtLeast(requiredAge);
+    }
+
+    @Override
+    public Codec<? extends ICondition> codec() { return CODEC; }
+}
+```
+
+Example recipe JSON using the condition:
+```json
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [
+    {
+      "type": "horizoncore:age_condition",
+      "required_age": "iron_age"
+    }
+  ],
+  "pattern": ["III", "I I", "III"],
+  "key": { "I": { "item": "horizonores:iron_ingot_refined" } },
+  "result": { "item": "horizoncraft:iron_plate", "count": 4 }
+}
+```
+
+---
+
+## 6. Technology Tree
+
+### 6.1 TechnologyData (Registry Object)
+
+**File:** `data/TechnologyData.java`
+
+Each node in the technology DAG is a `TechnologyData` registered into `HorizonRegistries.TECHNOLOGIES`. Nodes reference prerequisites by `ResourceLocation`.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
+
+import java.util.List;
+
+public class TechnologyData {
+    private final ResourceLocation id;
+    private final HorizonAge requiredAge;          // Minimum age to research this
+    private final List<ResourceLocation> prerequisites; // Other techs that must be unlocked first
+    private final int researchTimeTicks;            // Time cost in ticks at a Research Bench
+    private final List<ItemStack> researchCost;     // Materials consumed when research completes
+    private final List<TechEffect> effects;         // What this tech unlocks
+    private final String descriptionKey;            // Lang key for description
+    private final String iconPath;                  // Texture path for the tech tree GUI
+
+    public TechnologyData(Builder builder) {
+        this.id                 = builder.id;
+        this.requiredAge        = builder.requiredAge;
+        this.prerequisites      = List.copyOf(builder.prerequisites);
+        this.researchTimeTicks  = builder.researchTimeTicks;
+        this.researchCost       = List.copyOf(builder.researchCost);
+        this.effects            = List.copyOf(builder.effects);
+        this.descriptionKey     = builder.descriptionKey;
+        this.iconPath           = builder.iconPath;
+    }
+
+    // Getters
+    public ResourceLocation getId()                     { return id; }
+    public HorizonAge getRequiredAge()                  { return requiredAge; }
+    public List<ResourceLocation> getPrerequisites()    { return prerequisites; }
+    public int getResearchTimeTicks()                   { return researchTimeTicks; }
+    public List<ItemStack> getResearchCost()            { return researchCost; }
+    public List<TechEffect> getEffects()                { return effects; }
+    public String getDescriptionKey()                   { return descriptionKey; }
+    public String getIconPath()                         { return iconPath; }
+
+    /** Sealed interface for what a technology unlocks. */
+    public sealed interface TechEffect permits
+        TechEffect.UnlockRecipeCategory,
+        TechEffect.UnlockBlock,
+        TechEffect.UnlockSkillCap,
+        TechEffect.ModifyAttribute,
+        TechEffect.FireEvent {
+
+        record UnlockRecipeCategory(ResourceLocation categoryId) implements TechEffect {}
+        record UnlockBlock(ResourceLocation blockId) implements TechEffect {}
+        record UnlockSkillCap(SkillType skill, int newMaxLevel) implements TechEffect {}
+        record ModifyAttribute(ResourceLocation attributeId, double amount) implements TechEffect {}
+        record FireEvent(String eventKey) implements TechEffect {}
+    }
+
+    public static Builder builder(ResourceLocation id) { return new Builder(id); }
+
+    public static final class Builder {
+        private final ResourceLocation id;
+        private HorizonAge requiredAge = HorizonAge.STONE_AGE;
+        private List<ResourceLocation> prerequisites = List.of();
+        private int researchTimeTicks = 24000; // 1 in-game day default
+        private List<ItemStack> researchCost = List.of();
+        private List<TechEffect> effects = List.of();
+        private String descriptionKey = "";
+        private String iconPath = "";
+
+        private Builder(ResourceLocation id) { this.id = id; }
+
+        public Builder age(HorizonAge age)                        { this.requiredAge = age; return this; }
+        public Builder requires(ResourceLocation... prereqs)      { this.prerequisites = List.of(prereqs); return this; }
+        public Builder time(int ticks)                            { this.researchTimeTicks = ticks; return this; }
+        public Builder cost(List<ItemStack> items)                { this.researchCost = items; return this; }
+        public Builder effects(TechEffect... fx)                  { this.effects = List.of(fx); return this; }
+        public Builder description(String key)                    { this.descriptionKey = key; return this; }
+        public Builder icon(String path)                          { this.iconPath = path; return this; }
+        public TechnologyData build()                             { return new TechnologyData(this); }
+    }
+}
+```
+
+### 6.2 TechnologyGraph (DAG)
+
+**File:** `data/TechnologyGraph.java`
+
+After all mods have registered their technologies, `TechnologyGraph.buildGraph()` is called in `commonSetup`. It validates that all prerequisite references are valid and builds an adjacency list for efficient traversal.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import com.horizonpack.horizoncore.core.HorizonRegistries;
+import net.minecraft.resources.ResourceLocation;
+
+import java.util.*;
+
+public class TechnologyGraph {
+
+    // adjacency: tech → list of techs that depend on it
+    private static final Map<ResourceLocation, List<ResourceLocation>> dependents = new HashMap<>();
+    // reverse: tech → its prerequisites
+    private static final Map<ResourceLocation, List<ResourceLocation>> prerequisites = new HashMap<>();
+
+    public static void buildGraph() {
+        dependents.clear();
+        prerequisites.clear();
+
+        // Iterate every registered TechnologyData
+        HorizonRegistries.TECHNOLOGIES.getEntries().forEach(entry -> {
+            ResourceLocation id = entry.getKey().location();
+            List<ResourceLocation> prereqs = entry.getValue().getPrerequisites();
+
+            prerequisites.put(id, prereqs);
+
+            for (ResourceLocation prereq : prereqs) {
+                dependents.computeIfAbsent(prereq, k -> new ArrayList<>()).add(id);
+            }
+        });
+
+        validateNoCycles();
+    }
+
+    /** Returns all technologies that are immediately unlockable given a set of already-unlocked techs. */
+    public static List<ResourceLocation> getAvailableTechs(Set<ResourceLocation> unlocked, HorizonAge currentAge) {
+        List<ResourceLocation> available = new ArrayList<>();
+        HorizonRegistries.TECHNOLOGIES.getEntries().forEach(entry -> {
+            ResourceLocation id = entry.getKey().location();
+            TechnologyData tech = entry.getValue();
+            if (unlocked.contains(id)) return;
+            if (!currentAge.isAtLeast(tech.getRequiredAge())) return;
+            if (unlocked.containsAll(tech.getPrerequisites())) available.add(id);
+        });
+        return available;
+    }
+
+    /** Returns all techs that this tech directly unlocks (i.e., techs that list it as a prerequisite). */
+    public static List<ResourceLocation> getDependents(ResourceLocation techId) {
+        return dependents.getOrDefault(techId, List.of());
+    }
+
+    private static void validateNoCycles() {
+        // Kahn's algorithm — log a fatal error and skip broken nodes if a cycle is detected
+        // Full implementation omitted for brevity but must be present
+    }
+}
+```
+
+### 6.3 Technology JSON Data Files
+
+Each technology is defined by a JSON file in `data/horizoncore/horizon_technologies/<age>/<id>.json`.
+
+**Example:** `data/horizoncore/horizon_technologies/stone_age/fire_making.json`
+```json
+{
+  "required_age": "stone_age",
+  "prerequisites": [],
+  "research_time_ticks": 6000,
+  "research_cost": [
+    { "item": "minecraft:flint", "count": 4 },
+    { "item": "minecraft:stick", "count": 2 }
+  ],
+  "effects": [
+    { "type": "unlock_recipe_category", "category": "horizoncraft:fire_tools" },
+    { "type": "unlock_block", "block": "horizoncraft:campfire_primitive" }
+  ],
+  "description": "horizoncore.tech.fire_making.desc",
+  "icon": "horizoncore:textures/tech/fire_making.png"
+}
+```
+
+**Example:** `data/horizoncore/horizon_technologies/iron_age/iron_smelting.json`
+```json
+{
+  "required_age": "iron_age",
+  "prerequisites": [
+    "horizoncore:copper_smelting",
+    "horizoncore:bronze_alloy"
+  ],
+  "research_time_ticks": 72000,
+  "research_cost": [
+    { "item": "horizonores:iron_ore_chunk", "count": 16 },
+    { "item": "horizoncraft:charcoal_refined", "count": 8 },
+    { "item": "horizoncraft:clay_crucible", "count": 1 }
+  ],
+  "effects": [
+    { "type": "unlock_recipe_category", "category": "horizoncraft:iron_working" },
+    { "type": "unlock_block", "block": "horizoncraft:bloomery_furnace" },
+    { "type": "unlock_skill_cap", "skill": "METALLURGY", "new_max_level": 50 }
+  ],
+  "description": "horizoncore.tech.iron_smelting.desc",
+  "icon": "horizoncore:textures/tech/iron_smelting.png"
+}
+```
+
+---
+
+## 7. Skill System
+
+### 7.1 SkillType Enum
+
+**File:** `data/SkillType.java`
+
+All player skills. Skills are grouped by domain for UI display.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+public enum SkillType {
+    // ── Survival ──────────────────────────────────────────────────────────────
+    FORAGING        ("Foraging",        "survival"),
+    HUNTING         ("Hunting",         "survival"),
+    FISHING         ("Fishing",         "survival"),
+    COOKING         ("Cooking",         "survival"),
+    MEDICINE        ("Medicine",        "survival"),
+    NAVIGATION      ("Navigation",      "survival"),
+
+    // ── Combat ────────────────────────────────────────────────────────────────
+    MELEE           ("Melee Combat",    "combat"),
+    ARCHERY         ("Archery",         "combat"),
+    SHIELD_USE      ("Shield Use",      "combat"),
+    TACTICS         ("Tactics",         "combat"),
+
+    // ── Crafting ──────────────────────────────────────────────────────────────
+    METALLURGY      ("Metallurgy",      "crafting"),
+    CARPENTRY       ("Carpentry",       "crafting"),
+    MASONRY         ("Masonry",         "crafting"),
+    LEATHERWORKING  ("Leatherworking",  "crafting"),
+    TEXTILES        ("Textiles",        "crafting"),
+    POTTERY         ("Pottery",         "crafting"),
+    ALCHEMY         ("Alchemy",         "crafting"),
+    ENGINEERING     ("Engineering",     "crafting"),
+
+    // ── Agriculture ───────────────────────────────────────────────────────────
+    FARMING         ("Farming",         "agriculture"),
+    ANIMAL_HUSBANDRY("Animal Husbandry","agriculture"),
+    BOTANY          ("Botany",          "agriculture"),
+
+    // ── Academic ──────────────────────────────────────────────────────────────
+    LITERACY        ("Literacy",        "academic"),
+    MATHEMATICS     ("Mathematics",     "academic"),
+    PHILOSOPHY      ("Philosophy",      "academic"),
+    SCIENCE         ("Science",         "academic"),
+    HISTORY         ("History",         "academic"),
+
+    // ── Social ────────────────────────────────────────────────────────────────
+    DIPLOMACY       ("Diplomacy",       "social"),
+    TRADING         ("Trading",         "social"),
+    LEADERSHIP      ("Leadership",      "social"),
+    ESPIONAGE       ("Espionage",       "social"),
+    RHETORIC        ("Rhetoric",        "social"),
+
+    // ── Exploration ───────────────────────────────────────────────────────────
+    MINING          ("Mining",          "exploration"),
+    GEOLOGY         ("Geology",         "exploration"),
+    CARTOGRAPHY     ("Cartography",     "exploration"),
+    SAILING         ("Sailing",         "exploration");
+
+    private final String displayName;
+    private final String domain;
+
+    SkillType(String displayName, String domain) {
+        this.displayName = displayName;
+        this.domain      = domain;
+    }
+
+    public String getDisplayName() { return displayName; }
+    public String getDomain()      { return domain; }
+}
+```
+
+### 7.2 SkillDefinition (Registry Object)
+
+**File:** `data/SkillDefinition.java`
+
+Registered into `HorizonRegistries.SKILLS`. Defines the XP curve, max level, and per-level-up effects for each skill.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.resources.ResourceLocation;
+import java.util.Map;
+
+public class SkillDefinition {
+    private final SkillType type;
+    private final int maxLevel;
+    private final int baseXpPerLevel;    // XP needed for level 1. Level N costs base * N^1.5
+    private final Map<Integer, List<ResourceLocation>> levelUpUnlocks; // level → list of tech IDs to auto-unlock
+
+    public SkillDefinition(SkillType type, int maxLevel, int baseXpPerLevel,
+                           Map<Integer, List<ResourceLocation>> levelUpUnlocks) {
+        this.type             = type;
+        this.maxLevel         = maxLevel;
+        this.baseXpPerLevel   = baseXpPerLevel;
+        this.levelUpUnlocks   = Map.copyOf(levelUpUnlocks);
+    }
+
+    /** XP required to go from level (n-1) to level n. */
+    public int xpForLevel(int level) {
+        return (int)(baseXpPerLevel * Math.pow(level, 1.5));
+    }
+
+    /** Total cumulative XP required to reach a given level from 0. */
+    public int totalXpForLevel(int level) {
+        int total = 0;
+        for (int i = 1; i <= level; i++) total += xpForLevel(i);
+        return total;
+    }
+
+    public SkillType getType()          { return type; }
+    public int getMaxLevel()            { return maxLevel; }
+    public int getBaseXpPerLevel()      { return baseXpPerLevel; }
+    public Map<Integer, List<ResourceLocation>> getLevelUpUnlocks() { return levelUpUnlocks; }
+}
+```
+
+### 7.3 Skill XP Sources
+
+Skills gain XP from actions performed in the world. Other Horizon mods call `playerData.addSkillXP(SkillType.X, amount)` directly after relevant actions. Examples:
+
+| Action | Skill | XP Amount |
+|--------|-------|-----------|
+| Harvest a crop | FARMING | 5–15 xp |
+| Smelt a metal | METALLURGY | 10–30 xp |
+| Kill a hostile mob | MELEE | 8–20 xp |
+| Catch a fish | FISHING | 6–18 xp |
+| Complete a research project | SCIENCE | 50–200 xp |
+| Read a book at a Library | LITERACY | 20–80 xp |
+| Successfully trade with NPC | TRADING | 10–25 xp |
+| Craft a piece of armor | LEATHERWORKING / METALLURGY | 15–40 xp |
+| Mine a special ore | MINING, GEOLOGY | 5–20 xp |
+| Navigate to a new biome first time | NAVIGATION, CARTOGRAPHY | 25–100 xp |
+
+---
+
+## 8. Science & Research System
+
+### 8.1 ResearchProject (Active Instance)
+
+**File:** `data/ResearchProject.java`
+
+When a player begins researching a technology at a Research Bench, a `ResearchProject` is created and stored in the `ResearchBenchBlockEntity`. It tracks progress in ticks and applies bonuses from nearby Libraries/Universities.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+public class ResearchProject implements INBTSerializable<CompoundTag> {
+
+    private ResourceLocation technologyId;
+    private int totalTicksRequired;
+    private int ticksCompleted;
+    private float speedMultiplier = 1.0f; // Modified by Library/University proximity
+
+    public ResearchProject() {}
+
+    public ResearchProject(ResourceLocation technologyId, int totalTicksRequired) {
+        this.technologyId       = technologyId;
+        this.totalTicksRequired = totalTicksRequired;
+    }
+
+    /** Called every tick by the ResearchBenchBlockEntity. Returns true when complete. */
+    public boolean tick() {
+        ticksCompleted += (int)(speedMultiplier);
+        // Fractional remainder handled separately
+        return ticksCompleted >= totalTicksRequired;
+    }
+
+    public float getProgress()              { return (float) ticksCompleted / totalTicksRequired; }
+    public ResourceLocation getTechnologyId(){ return technologyId; }
+    public void setSpeedMultiplier(float m) { this.speedMultiplier = m; }
+    public float getSpeedMultiplier()       { return speedMultiplier; }
+
+    @Override
+    public CompoundTag serializeNBT() {
+        CompoundTag tag = new CompoundTag();
+        tag.putString("TechId", technologyId.toString());
+        tag.putInt("TotalTicks", totalTicksRequired);
+        tag.putInt("TicksDone", ticksCompleted);
+        tag.putFloat("SpeedMult", speedMultiplier);
+        return tag;
+    }
+
+    @Override
+    public void deserializeNBT(CompoundTag tag) {
+        technologyId       = new ResourceLocation(tag.getString("TechId"));
+        totalTicksRequired = tag.getInt("TotalTicks");
+        ticksCompleted     = tag.getInt("TicksDone");
+        speedMultiplier    = tag.getFloat("SpeedMult");
+    }
+}
+```
+
+### 8.2 Research Speed Bonuses
+
+| Structure | Radius | Speed Bonus |
+|-----------|--------|-------------|
+| Library (each book stored, up to 54) | 16 blocks | +0.5% per book |
+| University | 32 blocks | +50% flat |
+| Laboratory | 16 blocks | +30% flat (science techs only) |
+| Player has SCIENCE skill ≥ 25 | — | +10% |
+| Player has SCIENCE skill ≥ 50 | — | +25% |
+| Player has LITERACY skill ≥ 10 | — | +5% |
+
+Bonuses are multiplicative. A Research Bench adjacent to a University and inside Library range could achieve up to 2.2× speed.
+
+---
+
+## 9. Education System
+
+### 9.1 Institution Blocks
+
+**Research Bench** — The core crafting station for technology research. Holds one active `ResearchProject` and up to 9 material slots. Players must deposit required materials before research begins. Right-clicking opens `ResearchBenchScreen`.
+
+**Library** — A bookshelf-like block that can store up to 54 books (any `minecraft:writable_book` or `minecraft:written_book`). Passively emits a research speed aura in a 16-block radius. Players can read stored books to gain LITERACY XP.
+
+**University** — A large block (3×3×4 multiblock structure) available from the Medieval age. Requires a `horizon_technologies:universities` tech unlock. Up to 4 players can be "enrolled" at once, gaining accelerated XP gain for Academic skills while within 8 blocks and holding any Horizon knowledge item.
+
+**Laboratory** — Available from the Industrial age. Enables research into science-category technologies. Holds chemical reagent slots (12 slots) and an active experiment slot. Experiments have a success/failure probability modified by the player's SCIENCE skill level.
+
+### 9.2 Apprenticeship System
+
+Any NPC with a profession (registered in `HorizonRegistries.PROFESSIONS`) can serve as an apprenticeship master. Players can right-click an NPC master to enter an apprenticeship, which:
+
+- Grants 1.5× skill XP for the NPC's associated skills while within 32 blocks
+- Allows the NPC to teach recipes by right-clicking with relevant materials in hand
+- Progresses through three stages: Apprentice (0–30 days), Journeyman (30–90 days), Master (90+ days)
+- At Master stage, the player becomes a certified practitioner and can teach other players
+
+---
+
+## 10. Player Capability
+
+### 10.1 IHorizonPlayerData Interface
+
+**File:** `capabilities/IHorizonPlayerData.java`
+
+The full contract of data stored per player. All Horizon mods access player state through this interface only — never by casting to `HorizonPlayerData` directly.
+
+```java
+package com.horizonpack.horizoncore.capabilities;
+
+import com.horizonpack.horizoncore.data.*;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.common.util.INBTSerializable;
+
+import java.util.Map;
+import java.util.Set;
+
+public interface IHorizonPlayerData extends INBTSerializable<CompoundTag> {
+
+    // ═══════════════════════════════ NUTRITION ═══════════════════════════════
+    float getProtein();        void setProtein(float value);
+    float getCarbohydrates();  void setCarbohydrates(float value);
+    float getFats();           void setFats(float value);
+    float getFiber();          void setFiber(float value);
+    float getCalories();       void setCalories(float value);
+    float getHydration();      void setHydration(float value);
+
+    Map<VitaminType, Float> getVitamins();
+    float getVitamin(VitaminType type);
+    void  setVitamin(VitaminType type, float value);
+
+    Map<MineralType, Float> getMinerals();
+    float getMineral(MineralType type);
+    void  setMineral(MineralType type, float value);
+
+    /** Called by food items to add a batch of nutrients at once. */
+    void addNutrients(Map<NutrientType, Float> nutrients);
+
+    /** Called every server tick to decay nutrients over time. */
+    void consumeNutrients(float deltaTime);
+
+    // ═══════════════════════════════ SKILLS ══════════════════════════════════
+    Map<SkillType, Integer> getSkillLevels();
+    Map<SkillType, Integer> getSkillXP();
+    int  getSkillLevel(SkillType skill);
+    int  getSkillXP(SkillType skill);
+    /** Add XP and handle level-up logic including firing SkillLevelUpEvent. */
+    void addSkillXP(SkillType skill, int xp);
+    void setSkillLevel(SkillType skill, int level);
+    int  getEffectiveSkillCap(SkillType skill); // Base cap modified by unlocked techs
+
+    // ═══════════════════════════════ TECHNOLOGY ══════════════════════════════
+    Set<ResourceLocation> getUnlockedTechnologies();
+    boolean hasTechnology(ResourceLocation techId);
+    /** Unlock a technology, apply its effects, fire TechnologyUnlockEvent. */
+    void    unlockTechnology(ResourceLocation techId);
+
+    // ═══════════════════════════════ STATUS ══════════════════════════════════
+    float getBodyTemperature();      void setBodyTemperature(float celsius);
+    float getExhaustion();           void setExhaustion(float value);
+    boolean isEnrolledAtUniversity();void setEnrolledAtUniversity(boolean enrolled);
+    String  getCurrentApprenticeship();  void setCurrentApprenticeship(String npcId);
+
+    // ═══════════════════════════════ LANGUAGE ════════════════════════════════
+    /** Proficiency 0.0 (unknown) to 1.0 (fluent). */
+    Map<String, Float> getLanguageProficiency();
+    float getLanguageProficiency(String languageId);
+    void  improveLanguage(String languageId, float delta);
+
+    // ═══════════════════════════════ UTILITY ═════════════════════════════════
+    /** Called every 20 ticks (1 second) on the server. */
+    void tick();
+    /** Copy all data from another instance (used on player death/respawn). */
+    void copyFrom(IHorizonPlayerData other);
+    /** Returns true if any stat is critically low (triggers HUD warning). */
+    boolean hasCriticalDeficiency();
+}
+```
+
+### 10.2 HorizonPlayerData Implementation
+
+**File:** `capabilities/HorizonPlayerData.java`
+
+The concrete implementation. Stored as NBT in the player's `PersistentDataContainer` equivalent via the NeoForge capability system.
+
+Key NBT keys written to the `CompoundTag`:
+
+| NBT Key | Type | Description |
+|---------|------|-------------|
+| `Protein` | `TAG_FLOAT` | Protein level 0–100 |
+| `Carbohydrates` | `TAG_FLOAT` | Carb level 0–100 |
+| `Fats` | `TAG_FLOAT` | Fat level 0–100 |
+| `Fiber` | `TAG_FLOAT` | Fiber level 0–100 |
+| `Calories` | `TAG_FLOAT` | Calorie reserves 0–2000 |
+| `Hydration` | `TAG_FLOAT` | Hydration 0–100 |
+| `Vitamins` | `TAG_COMPOUND` | Key = VitaminType.name(), value = float |
+| `Minerals` | `TAG_COMPOUND` | Key = MineralType.name(), value = float |
+| `SkillLevels` | `TAG_COMPOUND` | Key = SkillType.name(), value = int |
+| `SkillXP` | `TAG_COMPOUND` | Key = SkillType.name(), value = int |
+| `Technologies` | `TAG_LIST` of `TAG_STRING` | ResourceLocation strings |
+| `BodyTemperature` | `TAG_FLOAT` | Celsius, normal = 37.0 |
+| `Exhaustion` | `TAG_FLOAT` | 0–100 |
+| `EnrolledUniversity` | `TAG_BYTE` (boolean) | |
+| `Apprenticeship` | `TAG_STRING` | NPC UUID or empty |
+| `Languages` | `TAG_COMPOUND` | Key = language id, value = float 0–1 |
+
+### 10.3 Capability Registration
+
+**File:** `capabilities/HorizonCapabilities.java`
+
+```java
+package com.horizonpack.horizoncore.capabilities;
+
+import com.horizonpack.horizoncore.core.HorizonCore;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.capabilities.EntityCapability;
+import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent;
+
+public class HorizonCapabilities {
+
+    /** The single capability token. All mods resolve player data through this. */
+    public static final EntityCapability<IHorizonPlayerData, Void> PLAYER_DATA =
+        EntityCapability.create(
+            new ResourceLocation(HorizonCore.MODID, "player_data"),
+            IHorizonPlayerData.class,
+            Void.class
+        );
+
+    public static void register(RegisterCapabilitiesEvent event) {
+        event.registerEntity(
+            PLAYER_DATA,
+            net.minecraft.world.entity.EntityType.PLAYER,
+            (player, context) -> new HorizonPlayerData()
+        );
+    }
+}
+```
+
+Helper method (place in a util class or HorizonCapabilities itself) for quick access:
+```java
+/** Convenience: get player data or null. Always check for null. */
+public static @Nullable IHorizonPlayerData get(Player player) {
+    return player.getCapability(PLAYER_DATA).orElse(null);
+}
+```
+
+---
+
+## 11. World SavedData
+
+### 11.1 WorldAgeData
+
+**File:** `data/WorldAgeData.java`
+
+Stored server-side in `level.getDataStorage()` under the key `"horizon_world_age"`. Persists across server restarts and dimension changes.
+
+```java
+package com.horizonpack.horizoncore.data;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.*;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.*;
+
+public class WorldAgeData extends SavedData {
+
+    private static final String DATA_NAME = "horizon_world_age";
+
+    // ── World state ───────────────────────────────────────────────────────────
+    private int  currentDay  = 0;
+    private long currentTick = 0;
+    private HorizonAge globalAge = HorizonAge.STONE_AGE;
+
+    // ── Settlement overrides ──────────────────────────────────────────────────
+    // BlockPos (encoded as long) → days this settlement has accumulated
+    private final Map<Long, Integer> settlementDays = new HashMap<>();
+
+    // ── Civilization overrides ────────────────────────────────────────────────
+    // Civilization UUID → days that civ has accumulated
+    private final Map<UUID, Integer> civilizationDays = new HashMap<>();
+
+    // ── Research bench progress (per bench position) ──────────────────────────
+    // BlockPos long → active ResearchProject NBT
+    private final Map<Long, ResearchProject> activeResearch = new HashMap<>();
+
+    public WorldAgeData() {}
+
+    // ── Static factory ────────────────────────────────────────────────────────
+    public static WorldAgeData get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+            new SavedData.Factory<>(WorldAgeData::new, WorldAgeData::load),
+            DATA_NAME
+        );
+    }
+
+    // ── Load ──────────────────────────────────────────────────────────────────
+    public static WorldAgeData load(CompoundTag tag) {
+        WorldAgeData data = new WorldAgeData();
+        data.currentDay  = tag.getInt("CurrentDay");
+        data.currentTick = tag.getLong("CurrentTick");
+        data.globalAge   = HorizonAge.values()[tag.getInt("GlobalAge")];
+
+        ListTag settlements = tag.getList("Settlements", Tag.TAG_COMPOUND);
+        for (Tag t : settlements) {
+            CompoundTag s = (CompoundTag) t;
+            data.settlementDays.put(s.getLong("Pos"), s.getInt("Days"));
+        }
+
+        ListTag civs = tag.getList("Civilizations", Tag.TAG_COMPOUND);
+        for (Tag t : civs) {
+            CompoundTag c = (CompoundTag) t;
+            data.civilizationDays.put(c.getUUID("UUID"), c.getInt("Days"));
+        }
+
+        ListTag research = tag.getList("ActiveResearch", Tag.TAG_COMPOUND);
+        for (Tag t : research) {
+            CompoundTag r = (CompoundTag) t;
+            long pos = r.getLong("Pos");
+            ResearchProject project = new ResearchProject();
+            project.deserializeNBT(r.getCompound("Project"));
+            data.activeResearch.put(pos, project);
+        }
+
+        return data;
+    }
+
+    // ── Save ──────────────────────────────────────────────────────────────────
+    @Override
+    public @NotNull CompoundTag save(@NotNull CompoundTag tag) {
+        tag.putInt("CurrentDay",  currentDay);
+        tag.putLong("CurrentTick", currentTick);
+        tag.putInt("GlobalAge",   globalAge.ordinal());
+
+        ListTag settlements = new ListTag();
+        settlementDays.forEach((pos, days) -> {
+            CompoundTag s = new CompoundTag();
+            s.putLong("Pos", pos); s.putInt("Days", days);
+            settlements.add(s);
+        });
+        tag.put("Settlements", settlements);
+
+        ListTag civs = new ListTag();
+        civilizationDays.forEach((id, days) -> {
+            CompoundTag c = new CompoundTag();
+            c.putUUID("UUID", id); c.putInt("Days", days);
+            civs.add(c);
+        });
+        tag.put("Civilizations", civs);
+
+        ListTag research = new ListTag();
+        activeResearch.forEach((pos, project) -> {
+            CompoundTag r = new CompoundTag();
+            r.putLong("Pos", pos);
+            r.put("Project", project.serializeNBT());
+            research.add(r);
+        });
+        tag.put("ActiveResearch", research);
+
+        return tag;
+    }
+
+    // ── Day advancement ───────────────────────────────────────────────────────
+    /**
+     * Called by HorizonEventHandlers on LevelTickEvent every 24000 ticks.
+     * Checks for age transitions and fires AgeAdvancementEvent if one occurs.
+     */
+    public void advanceDay(ServerLevel level) {
+        currentDay++;
+        currentTick += 24000;
+        HorizonAge newAge = HorizonAge.fromDay(currentDay);
+        if (newAge != globalAge) {
+            HorizonAge oldAge = globalAge;
+            globalAge = newAge;
+            // Fire the event — all other mods listen to this
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
+                new com.horizonpack.horizoncore.events.custom.AgeAdvancementEvent(level, oldAge, newAge, null));
+        }
+        setDirty();
+    }
+
+    // ── Getters / setters ─────────────────────────────────────────────────────
+    public int      getCurrentDay()         { return currentDay; }
+    public long     getCurrentTick()        { return currentTick; }
+    public HorizonAge getGlobalAge()        { return globalAge; }
+
+    public HorizonAge getSettlementAge(BlockPos pos) {
+        Integer days = settlementDays.get(pos.asLong());
+        return days == null ? globalAge : HorizonAge.fromDay(days);
+    }
+
+    public void advanceSettlement(BlockPos pos) {
+        settlementDays.merge(pos.asLong(), 1, Integer::sum);
+        setDirty();
+    }
+
+    public HorizonAge getCivilizationAge(UUID civId) {
+        return HorizonAge.fromDay(civilizationDays.getOrDefault(civId, 0));
+    }
+
+    public void advanceCivilization(UUID civId) {
+        civilizationDays.merge(civId, 1, Integer::sum);
+        setDirty();
+    }
+
+    public @Nullable ResearchProject getActiveResearch(BlockPos pos) {
+        return activeResearch.get(pos.asLong());
+    }
+
+    public void setActiveResearch(BlockPos pos, ResearchProject project) {
+        activeResearch.put(pos.asLong(), project);
+        setDirty();
+    }
+
+    public void clearActiveResearch(BlockPos pos) {
+        activeResearch.remove(pos.asLong());
+        setDirty();
+    }
+}
+```
+
+---
+
+## 12. Event System
+
+### 12.1 Custom Events
+
+All custom events live in `events/custom/`. They are fired on `NeoForge.EVENT_BUS`.
+
+**File:** `events/custom/AgeAdvancementEvent.java`
+```java
+package com.horizonpack.horizoncore.events.custom;
+
+import com.horizonpack.horizoncore.data.HorizonAge;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.neoforged.bus.api.Event;
+import net.neoforged.bus.api.ICancellableEvent;
+import org.jetbrains.annotations.Nullable;
+
+/** Fired on the NeoForge event bus when a global or settlement age transition occurs. Cancellable. */
+public class AgeAdvancementEvent extends Event implements ICancellableEvent {
+    private final Level level;
+    private final HorizonAge oldAge;
+    private final HorizonAge newAge;
+    private final @Nullable BlockPos settlementPos; // null = global transition
+
+    public AgeAdvancementEvent(Level level, HorizonAge oldAge, HorizonAge newAge, @Nullable BlockPos settlementPos) {
+        this.level         = level;
+        this.oldAge        = oldAge;
+        this.newAge        = newAge;
+        this.settlementPos = settlementPos;
+    }
+
+    public Level   getLevel()            { return level; }
+    public HorizonAge getOldAge()        { return oldAge; }
+    public HorizonAge getNewAge()        { return newAge; }
+    public @Nullable BlockPos getSettlementPos() { return settlementPos; }
+    public boolean isGlobal()            { return settlementPos == null; }
+}
+```
+
+**File:** `events/custom/TechnologyUnlockEvent.java`
+```java
+/** Fired when a player unlocks a technology. Not cancellable — effects are applied before firing. */
+public class TechnologyUnlockEvent extends Event {
+    private final Player player;
+    private final ResourceLocation technologyId;
+    private final TechnologyData technology;
+
+    // Constructor + getters ...
+}
+```
+
+**File:** `events/custom/SkillLevelUpEvent.java`
+```java
+/** Fired when a player's skill level increases. Not cancellable. */
+public class SkillLevelUpEvent extends Event {
+    private final Player player;
+    private final SkillType skill;
+    private final int oldLevel;
+    private final int newLevel;
+
+    // Constructor + getters ...
+}
+```
+
+**File:** `events/custom/ResearchCompleteEvent.java`
+```java
+/** Fired when a ResearchBenchBlockEntity completes a project. Cancellable. */
+public class ResearchCompleteEvent extends Event implements ICancellableEvent {
+    private final ServerLevel level;
+    private final BlockPos benchPos;
+    private final ResearchProject project;
+    private final @Nullable Player researchingPlayer; // May be null if no player online
+
+    // Constructor + getters ...
+}
+```
+
+**File:** `events/custom/DayAdvanceEvent.java`
+```java
+/** Fired every in-game day. Used by sub-mods to run daily simulation ticks. */
+public class DayAdvanceEvent extends Event {
+    private final ServerLevel level;
+    private final int newDay;
+    private final HorizonAge currentAge;
+
+    // Constructor + getters ...
+}
+```
+
+### 12.2 Core Event Handlers
+
+**File:** `events/HorizonEventHandlers.java`
+
+```java
+package com.horizonpack.horizoncore.events;
+
+import com.horizonpack.horizoncore.capabilities.*;
+import com.horizonpack.horizoncore.data.WorldAgeData;
+import com.horizonpack.horizoncore.events.custom.DayAdvanceEvent;
+import com.horizonpack.horizoncore.network.HorizonPacketHandler;
+import com.horizonpack.horizoncore.network.packets.*;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+
+@Mod.EventBusSubscriber(modid = "horizoncore")
+public class HorizonEventHandlers {
+
+    /** Tick player capability every second (20 ticks). */
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent.Post event) {
+        Player player = event.getEntity();
+        if (player.level().isClientSide) return;
+        if (player.tickCount % 20 != 0) return;
+
+        IHorizonPlayerData data = HorizonCapabilities.get(player);
+        if (data != null) {
+            data.tick();
+            // Sync HUD-relevant data to client every 5 seconds
+            if (player.tickCount % 100 == 0 && player instanceof ServerPlayer sp) {
+                HorizonPacketHandler.sendToPlayer(new SyncPlayerDataPacket(data.serializeNBT()), sp);
+            }
+        }
+    }
+
+    /** Copy capability data on player death + respawn. */
+    @SubscribeEvent
+    public static void onPlayerClone(PlayerEvent.Clone event) {
+        if (!event.isWasDeath()) return;
+        IHorizonPlayerData original = HorizonCapabilities.get(event.getOriginal());
+        IHorizonPlayerData copy     = HorizonCapabilities.get(event.getEntity());
+        if (original != null && copy != null) copy.copyFrom(original);
+    }
+
+    /** Sync capability to client on login. */
+    @SubscribeEvent
+    public static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer sp)) return;
+        IHorizonPlayerData data = HorizonCapabilities.get(sp);
+        if (data != null) {
+            HorizonPacketHandler.sendToPlayer(new SyncPlayerDataPacket(data.serializeNBT()), sp);
+        }
+    }
+
+    /**
+     * Level tick: advance world day counter every 24000 game ticks.
+     * Also fires DayAdvanceEvent for sub-mods to run daily simulation.
+     */
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Post event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) return;
+        if (level.dimension() != ServerLevel.OVERWORLD) return;
+
+        long tick = level.getGameTime();
+        if (tick % 24000 == 0 && tick > 0) {
+            WorldAgeData data = WorldAgeData.get(level);
+            data.advanceDay(level);
+            NeoForge.EVENT_BUS.post(new DayAdvanceEvent(level, data.getCurrentDay(), data.getGlobalAge()));
+        }
+    }
+
+    /** Sync age to client when it changes. */
+    @SubscribeEvent
+    public static void onAgeAdvancement(
+            com.horizonpack.horizoncore.events.custom.AgeAdvancementEvent event) {
+        if (event.getLevel() instanceof ServerLevel sl) {
+            sl.players().forEach(p ->
+                HorizonPacketHandler.sendToPlayer(new SyncAgePacket(event.getNewAge()), p));
+        }
+    }
+}
+```
+
+---
+
+## 13. Network Packets
+
+All packets use NeoForge's `RegisterPayloadHandlerEvent` system.
+
+### 13.1 Packet Handler
+
+**File:** `network/HorizonPacketHandler.java`
+
+```java
+package com.horizonpack.horizoncore.network;
+
+import com.horizonpack.horizoncore.core.HorizonCore;
+import com.horizonpack.horizoncore.network.packets.*;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlerEvent;
+import net.neoforged.neoforge.network.registration.IPayloadRegistrar;
+
+public class HorizonPacketHandler {
+
+    public static void register(RegisterPayloadHandlerEvent event) {
+        IPayloadRegistrar reg = event.registrar(HorizonCore.MODID).versioned("1");
+
+        // Server → Client
+        reg.play(SyncPlayerDataPacket.ID,    SyncPlayerDataPacket::new,
+                 h -> h.client(SyncPlayerDataPacket::handleClient));
+        reg.play(SyncAgePacket.ID,           SyncAgePacket::new,
+                 h -> h.client(SyncAgePacket::handleClient));
+        reg.play(TechUnlockPacket.ID,        TechUnlockPacket::new,
+                 h -> h.client(TechUnlockPacket::handleClient));
+        reg.play(SkillUpdatePacket.ID,       SkillUpdatePacket::new,
+                 h -> h.client(SkillUpdatePacket::handleClient));
+
+        // Client → Server
+        reg.play(RequestResearchPacket.ID,   RequestResearchPacket::new,
+                 h -> h.server(RequestResearchPacket::handleServer));
+    }
+
+    public static void sendToPlayer(Object packet, ServerPlayer player) {
+        PacketDistributor.PLAYER.with(player).send(packet);
+    }
+
+    public static void sendToAllPlayers(Object packet, net.minecraft.server.MinecraftServer server) {
+        PacketDistributor.ALL.noArg().send(packet);
+    }
+
+    public static void sendToServer(Object packet) {
+        PacketDistributor.SERVER.noArg().send(packet);
+    }
+}
+```
+
+### 13.2 Packet Classes
+
+| Packet | Direction | Purpose | Payload |
+|--------|-----------|---------|---------|
+| `SyncPlayerDataPacket` | S→C | Full capability sync | `CompoundTag` |
+| `SyncAgePacket` | S→C | Notify client of age change | `int` (ordinal) |
+| `TechUnlockPacket` | S→C | Trigger tech unlock animation + sound | `ResourceLocation` |
+| `SkillUpdatePacket` | S→C | Update skill bar in HUD | `SkillType`, `int` level, `int` xp |
+| `RequestResearchPacket` | C→S | Player clicks "Start Research" in GUI | `ResourceLocation` techId, `BlockPos` bench |
+
+---
+
+## 14. HUD & Client Rendering
+
+### 14.1 HorizonHudOverlay
+
+**File:** `client/gui/HorizonHudOverlay.java`
+
+Registered via `RegisterGuiLayersEvent`. Draws:
+
+- **Age badge** — top-right corner, shows current age name (e.g., "Iron Age")
+- **Nutrition bars** — 6 bars (protein, carbs, fat, fiber, hydration, calories) drawn bottom-left above the hotbar. Each bar color-codes its status: green (healthy), yellow (low), red (critically low)
+- **Body temperature** — thermometer icon next to nutrition bars; turns blue if hypothermic, red if hyperthermic
+- **Active skill XP flash** — when a skill gains XP, a brief "+15 Metallurgy XP" toast appears
+
+Client-side data is stored in a `ClientHorizonData` class populated by incoming packets.
+
+### 14.2 TechTreeScreen
+
+**File:** `client/gui/TechTreeScreen.java`
+
+A full-screen scrollable/zoomable DAG viewer. Each tech node is rendered as a 48×48 icon button. Color coding:
+
+- **Gray** — locked (prerequisites not met or age not reached)
+- **Yellow** — available to research
+- **Green** — already unlocked
+- **Blue outline** — currently being researched
+
+Clicking an available node opens a detail panel showing description, cost, time, and prerequisites. Clicking "Begin Research" sends `RequestResearchPacket`.
+
+---
+
+## 15. Configuration
+
+**File:** `core/HorizonConfig.java`
+
+```java
+package com.horizonpack.horizoncore.core;
+
+import net.neoforged.neoforge.common.ModConfigSpec;
+
+public class HorizonConfig {
+
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
+    public static final Common COMMON;
+    public static final Client CLIENT;
+
+    static {
+        var commonPair = new ModConfigSpec.Builder().configure(Common::new);
+        COMMON      = commonPair.getLeft();
+        COMMON_SPEC = commonPair.getRight();
+
+        var clientPair = new ModConfigSpec.Builder().configure(Client::new);
+        CLIENT      = clientPair.getLeft();
+        CLIENT_SPEC = clientPair.getRight();
+    }
+
+    public static class Common {
+        // World
+        public final ModConfigSpec.IntValue    continentCount;
+
+        // Progression
+        public final ModConfigSpec.IntValue    daysPerAgeMultiplier;
+        public final ModConfigSpec.BooleanValue enableAgeRestrictions;
+        public final ModConfigSpec.BooleanValue civilizationsCanAdvanceIndependently;
+
+        // Research
+        public final ModConfigSpec.DoubleValue researchSpeedMultiplier;
+        public final ModConfigSpec.BooleanValue requireMaterialsForResearch;
+
+        // Difficulty
+        public final ModConfigSpec.DoubleValue disasterFrequency;
+        public final ModConfigSpec.DoubleValue npcAggression;
+        public final ModConfigSpec.BooleanValue realisticNutrition;
+
+        // Performance
+        public final ModConfigSpec.IntValue simulationRadius;
+        public final ModConfigSpec.IntValue maxActiveNPCs;
+
+        Common(ModConfigSpec.Builder b) {
+            b.push("world");
+            continentCount = b.comment("Number of continents (1–20)")
+                              .defineInRange("continentCount", 7, 1, 20);
+            b.pop();
+
+            b.push("progression");
+            daysPerAgeMultiplier = b.comment("Multiplier applied to all age thresholds")
+                                    .defineInRange("daysPerAgeMultiplier", 1, 0, 10);
+            enableAgeRestrictions = b.comment("Lock recipes and blocks behind age requirements")
+                                     .define("enableAgeRestrictions", true);
+            civilizationsCanAdvanceIndependently = b
+                .comment("Allow NPC civilizations to reach higher ages than the player")
+                .define("civilizationsCanAdvanceIndependently", true);
+            b.pop();
+
+            b.push("research");
+            researchSpeedMultiplier = b.comment("Global multiplier for all research speeds")
+                                       .defineInRange("researchSpeedMultiplier", 1.0, 0.1, 10.0);
+            requireMaterialsForResearch = b.comment("Research consumes material items when enabled")
+                                          .define("requireMaterialsForResearch", true);
+            b.pop();
+
+            b.push("difficulty");
+            disasterFrequency = b.comment("Disaster frequency (0 = none, 1 = maximum)")
+                                  .defineInRange("disasterFrequency", 0.5, 0.0, 1.0);
+            npcAggression     = b.comment("NPC civilization aggression (0–1)")
+                                  .defineInRange("npcAggression", 0.5, 0.0, 1.0);
+            realisticNutrition = b.comment("Enable multi-nutrient food system")
+                                  .define("realisticNutrition", true);
+            b.pop();
+
+            b.push("performance");
+            simulationRadius = b.comment("Chunk radius for full simulation (1–32)")
+                                 .defineInRange("simulationRadius", 8, 1, 32);
+            maxActiveNPCs    = b.comment("Maximum simultaneously active NPCs")
+                                 .defineInRange("maxActiveNPCs", 1000, 100, 10000);
+            b.pop();
+        }
+    }
+
+    public static class Client {
+        public final ModConfigSpec.BooleanValue showNutritionHUD;
+        public final ModConfigSpec.BooleanValue showTemperatureHUD;
+        public final ModConfigSpec.BooleanValue showAgeNotification;
+        public final ModConfigSpec.BooleanValue showSkillXPToasts;
+        public final ModConfigSpec.IntValue     hudScale;
+
+        Client(ModConfigSpec.Builder b) {
+            b.push("hud");
+            showNutritionHUD    = b.define("showNutritionHUD", true);
+            showTemperatureHUD  = b.define("showTemperatureHUD", true);
+            showAgeNotification = b.define("showAgeNotification", true);
+            showSkillXPToasts   = b.define("showSkillXPToasts", true);
+            hudScale            = b.defineInRange("hudScale", 100, 50, 200);
+            b.pop();
+        }
+    }
+}
+```
+
+---
+
+## 16. Data Pack Integration
+
+### 16.1 Blockstate JSONs
+
+**`assets/horizoncore/blockstates/research_bench.json`**
+```json
+{
+  "variants": {
+    "facing=north": { "model": "horizoncore:block/research_bench", "y": 180 },
+    "facing=south": { "model": "horizoncore:block/research_bench" },
+    "facing=east":  { "model": "horizoncore:block/research_bench", "y": 270 },
+    "facing=west":  { "model": "horizoncore:block/research_bench", "y": 90 }
+  }
+}
+```
+
+**`assets/horizoncore/blockstates/library.json`**
+```json
+{
+  "variants": {
+    "": { "model": "horizoncore:block/library" }
+  }
+}
+```
+
+### 16.2 Block Models
+
+**`assets/horizoncore/models/block/research_bench.json`**
+```json
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "top":   "horizoncore:block/research_bench_top",
+    "front": "horizoncore:block/research_bench_front",
+    "side":  "horizoncore:block/research_bench_side"
+  }
+}
+```
+
+**`assets/horizoncore/models/block/library.json`**
+```json
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "horizoncore:block/library_side"
+  }
+}
+```
+
+### 16.3 Item Models
+
+**`assets/horizoncore/models/item/research_bench.json`**
+```json
+{
+  "parent": "horizoncore:block/research_bench"
+}
+```
+
+**`assets/horizoncore/models/item/tech_scroll.json`**
+```json
+{
+  "parent": "minecraft:item/generated",
+  "textures": { "layer0": "horizoncore:item/tech_scroll" }
+}
+```
+
+### 16.4 Recipes
+
+**`data/horizoncore/recipes/research_bench.json`**
+```json
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": ["WBW", "SSS", "PPP"],
+  "key": {
+    "W": { "item": "minecraft:writable_book" },
+    "B": { "item": "minecraft:bookshelf" },
+    "S": { "item": "minecraft:stone_slab" },
+    "P": { "item": "minecraft:oak_planks" }
+  },
+  "result": { "item": "horizoncore:research_bench", "count": 1 }
+}
+```
+
+**`data/horizoncore/recipes/library.json`**
+```json
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": ["PPP", "BSB", "PPP"],
+  "key": {
+    "P": { "item": "minecraft:oak_planks" },
+    "B": { "item": "minecraft:bookshelf" },
+    "S": { "item": "minecraft:stone" }
+  },
+  "result": { "item": "horizoncore:library", "count": 1 }
+}
+```
+
+**`data/horizoncore/recipes/university.json`**
+```json
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [{ "type": "horizoncore:age_condition", "required_age": "medieval" }],
+  "pattern": ["SCS", "LBL", "SCS"],
+  "key": {
+    "S": { "item": "minecraft:stone_bricks" },
+    "C": { "item": "minecraft:chiseled_stone_bricks" },
+    "L": { "item": "horizoncore:library" },
+    "B": { "item": "minecraft:bookshelf" }
+  },
+  "result": { "item": "horizoncore:university", "count": 1 }
+}
+```
+
+**`data/horizoncore/recipes/laboratory.json`**
+```json
+{
+  "type": "minecraft:crafting_shaped",
+  "conditions": [{ "type": "horizoncore:age_condition", "required_age": "industrial" }],
+  "pattern": ["GIG", "ICI", "GIG"],
+  "key": {
+    "G": { "item": "minecraft:glass_pane" },
+    "I": { "item": "minecraft:iron_ingot" },
+    "C": { "item": "minecraft:cauldron" }
+  },
+  "result": { "item": "horizoncore:laboratory", "count": 1 }
+}
+```
+
+### 16.5 Loot Tables
+
+**`data/horizoncore/loot_tables/blocks/research_bench.json`**
+```json
+{
+  "type": "minecraft:block",
+  "pools": [{
+    "rolls": 1,
+    "entries": [{ "type": "minecraft:item", "name": "horizoncore:research_bench" }],
+    "conditions": [{ "condition": "minecraft:survives_explosion" }]
+  }]
+}
+```
+
+### 16.6 Tags
+
+**`data/horizoncore/tags/blocks/horizon_workstations.json`**
+```json
+{
+  "values": [
+    "horizoncore:research_bench",
+    "horizoncore:library",
+    "horizoncore:university",
+    "horizoncore:laboratory"
+  ]
+}
+```
+
+**`data/horizoncore/tags/items/research_materials.json`**
+```json
+{
+  "values": [
+    "minecraft:flint",
+    "minecraft:clay_ball",
+    "minecraft:bone",
+    "minecraft:charcoal",
+    "#minecraft:logs"
+  ]
+}
+```
+
+### 16.7 Advancements
+
+**`data/horizoncore/advancements/root.json`**
+```json
+{
+  "display": {
+    "title": { "translate": "advancements.horizoncore.root.title" },
+    "description": { "translate": "advancements.horizoncore.root.desc" },
+    "icon": { "item": "horizoncore:research_bench" },
+    "background": "minecraft:textures/gui/advancements/backgrounds/stone.png",
+    "show_toast": false,
+    "announce_to_chat": false
+  },
+  "criteria": {
+    "tick": {
+      "trigger": "minecraft:tick"
+    }
+  }
+}
+```
+
+**`data/horizoncore/advancements/first_tech.json`**
+```json
+{
+  "display": {
+    "title": { "translate": "advancements.horizoncore.first_tech.title" },
+    "description": { "translate": "advancements.horizoncore.first_tech.desc" },
+    "icon": { "item": "horizoncore:tech_scroll" },
+    "show_toast": true,
+    "announce_to_chat": true
+  },
+  "parent": "horizoncore:root",
+  "criteria": {
+    "unlock_any_tech": {
+      "trigger": "horizoncore:technology_unlocked"
+    }
+  }
+}
+```
+
+---
+
+## 17. Lang / Localization
+
+**`assets/horizoncore/lang/en_us.json`**
+```json
+{
+  "item.horizoncore.tech_scroll":     "Technology Scroll",
+  "item.horizoncore.research_note":   "Research Notes",
+  "item.horizoncore.skill_book":      "Skill Tome",
+
+  "block.horizoncore.research_bench": "Research Bench",
+  "block.horizoncore.library":        "Library",
+  "block.horizoncore.university":     "University",
+  "block.horizoncore.laboratory":     "Laboratory",
+
+  "age.horizoncore.stone_age":    "Stone Age",
+  "age.horizoncore.copper_age":   "Copper Age",
+  "age.horizoncore.bronze_age":   "Bronze Age",
+  "age.horizoncore.iron_age":     "Iron Age",
+  "age.horizoncore.medieval":     "Medieval Era",
+  "age.horizoncore.industrial":   "Industrial Revolution",
+  "age.horizoncore.modern":       "Modern Era",
+
+  "skill.horizoncore.foraging":       "Foraging",
+  "skill.horizoncore.hunting":        "Hunting",
+  "skill.horizoncore.fishing":        "Fishing",
+  "skill.horizoncore.cooking":        "Cooking",
+  "skill.horizoncore.medicine":       "Medicine",
+  "skill.horizoncore.navigation":     "Navigation",
+  "skill.horizoncore.melee":          "Melee Combat",
+  "skill.horizoncore.archery":        "Archery",
+  "skill.horizoncore.shield_use":     "Shield Use",
+  "skill.horizoncore.tactics":        "Tactics",
+  "skill.horizoncore.metallurgy":     "Metallurgy",
+  "skill.horizoncore.carpentry":      "Carpentry",
+  "skill.horizoncore.masonry":        "Masonry",
+  "skill.horizoncore.leatherworking": "Leatherworking",
+  "skill.horizoncore.textiles":       "Textiles",
+  "skill.horizoncore.pottery":        "Pottery",
+  "skill.horizoncore.alchemy":        "Alchemy",
+  "skill.horizoncore.engineering":    "Engineering",
+  "skill.horizoncore.farming":        "Farming",
+  "skill.horizoncore.animal_husbandry": "Animal Husbandry",
+  "skill.horizoncore.botany":         "Botany",
+  "skill.horizoncore.literacy":       "Literacy",
+  "skill.horizoncore.mathematics":    "Mathematics",
+  "skill.horizoncore.philosophy":     "Philosophy",
+  "skill.horizoncore.science":        "Science",
+  "skill.horizoncore.history":        "History",
+  "skill.horizoncore.diplomacy":      "Diplomacy",
+  "skill.horizoncore.trading":        "Trading",
+  "skill.horizoncore.leadership":     "Leadership",
+  "skill.horizoncore.espionage":      "Espionage",
+  "skill.horizoncore.rhetoric":       "Rhetoric",
+  "skill.horizoncore.mining":         "Mining",
+  "skill.horizoncore.geology":        "Geology",
+  "skill.horizoncore.cartography":    "Cartography",
+  "skill.horizoncore.sailing":        "Sailing",
+
+  "horizoncore.tech.fire_making.desc":   "Master the creation and control of fire.",
+  "horizoncore.tech.iron_smelting.desc": "Smelt iron ore at temperatures only a bloomery can achieve.",
+
+  "advancements.horizoncore.root.title":       "Horizon Corebreach",
+  "advancements.horizoncore.root.desc":        "Your journey through civilization begins.",
+  "advancements.horizoncore.first_tech.title": "Knowledge is Power",
+  "advancements.horizoncore.first_tech.desc":  "Unlock your first technology at a Research Bench.",
+
+  "gui.horizoncore.research_bench.title":      "Research Bench",
+  "gui.horizoncore.tech_tree.title":           "Technology Tree",
+  "gui.horizoncore.skill_book.title":          "Skills",
+  "gui.horizoncore.progress":                  "Progress",
+  "gui.horizoncore.research_time":             "Research Time",
+  "gui.horizoncore.requires":                  "Requires",
+  "gui.horizoncore.start_research":            "Begin Research",
+
+  "hud.horizoncore.age":                       "Age: %s",
+  "hud.horizoncore.day":                       "Day %d",
+
+  "config.horizoncore.title":                  "HorizonCore Configuration",
+  "config.horizoncore.continent_count":        "Continent Count",
+  "config.horizoncore.age_multiplier":         "Age Day Multiplier",
+  "config.horizoncore.disaster_frequency":     "Disaster Frequency",
+  "config.horizoncore.npc_aggression":         "NPC Aggression"
+}
+```
+
+---
+
+## 18. build.gradle
+
+```gradle
+plugins {
+    id 'java'
+    id 'net.neoforged.gradle.userdev' version '7.0.145'
+}
+
+version   = '1.0.0'
+group     = 'com.horizonpack.horizoncore'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+runs {
+    client {
+        workingDirectory project.file('run/client')
+        property 'forge.logging.console.level', 'debug'
+        modSources project.the(UserDevExtension).sourceSets.getByName("main")
+    }
+    server {
+        workingDirectory project.file('run/server')
+        property 'forge.logging.console.level', 'debug'
+        modSources project.the(UserDevExtension).sourceSets.getByName("main")
+    }
+    data {
+        workingDirectory project.file('run/data')
+        programArguments.addAll '--mod', 'horizoncore',
+            '--all',
+            '--output', file('src/generated/resources/').absolutePath,
+            '--existing', file('src/main/resources/').absolutePath
+        modSources project.the(UserDevExtension).sourceSets.getByName("main")
+    }
+}
+
+sourceSets.main.resources.srcDir 'src/generated/resources'
+
+dependencies {
+    implementation "net.neoforged:neoforge:${neo_version}"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:unchecked'
+}
+```
+
+**`gradle.properties`**
+```properties
+neo_version=21.1.172
+minecraft_version=1.21.1
+mod_version=1.0.0
+```
+
+---
+
+## 19. neoforge.mods.toml
+
+**`src/main/resources/META-INF/neoforge.mods.toml`**
+```toml
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "MIT"
+
+[[mods]]
+    modId          = "horizoncore"
+    version        = "1.0.0"
+    displayName    = "Horizon Core"
+    description    = """
+The central API and foundation for the Horizon Corebreach modpack.
+Provides the age system, technology tree, skill system, research,
+and the shared player capability used by all other Horizon mods.
+"""
+    logoFile       = "horizoncore_logo.png"
+
+[[dependencies.horizoncore]]
+    modId      = "neoforge"
+    type       = "required"
+    versionRange = "[21.1,22)"
+    ordering   = "NONE"
+    side       = "BOTH"
+
+[[dependencies.horizoncore]]
+    modId      = "minecraft"
+    type       = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering   = "NONE"
+    side       = "BOTH"
+```
+
+---
+
+## 20. Critical Implementation Notes
+
+### Thread Safety
+- All `WorldAgeData` modifications happen server-side. Never call `WorldAgeData.get()` from a client thread.
+- Always check `level.isClientSide()` before accessing server-only data.
+- Enqueue work properly in packet handlers: `context.workHandler().submitAsync(() -> {...})`.
+- `setDirty()` must be called on every `SavedData` mutation or changes will not persist.
+
+### NBT Versioning
+- Add a `"DataVersion"` int tag to every `serializeNBT()` output.
+- In `deserializeNBT()`, check the version and migrate old formats before reading.
+- Start at version 1. Increment whenever the NBT schema changes.
+
+### Capability Persistence on Death
+- `HorizonEventHandlers.onPlayerClone` copies all capability data on death.
+- Skills, technologies, and language proficiency are always preserved.
+- Nutrition levels are partially reset on death (configurable: `resetNutritionOnDeath`).
+
+### Adding New Technologies from Sub-Mods
+Sub-mods add technologies by creating their own `DeferredRegister<TechnologyData>` using the key `HorizonRegistries.TECHNOLOGY_REGISTRY_KEY`:
+
+```java
+// In your sub-mod's Registry class:
+public static final DeferredRegister<TechnologyData> TECHNOLOGIES =
+    DeferredRegister.create(HorizonRegistries.TECHNOLOGY_REGISTRY_KEY, MyMod.MODID);
+
+public static final RegistryObject<TechnologyData> MY_TECH = TECHNOLOGIES.register("my_tech",
+    () -> TechnologyData.builder(new ResourceLocation(MyMod.MODID, "my_tech"))
+        .age(HorizonAge.IRON_AGE)
+        .requires(new ResourceLocation("horizoncore", "iron_smelting"))
+        .time(48000)
+        .build());
+```
+
+### Adding New Skills from Sub-Mods
+Similarly, sub-mods register `SkillDefinition` entries using `HorizonRegistries.SKILL_REGISTRY_KEY`. The `SkillType` enum must be extended if a truly new skill domain is needed — open an issue on the project repo to propose additions to the core enum.
+
+### Performance
+- The player capability tick runs every 20 ticks (1 second) per player. Keep `tick()` fast — no registry lookups, no level queries. Cache values.
+- `TechnologyGraph.getAvailableTechs()` iterates all registered technologies. Cache the result per player per day; only invalidate when the player's tech set or the global age changes.
+- `WorldAgeData` is loaded once and kept in memory. Do not call `computeIfAbsent` in hot paths; cache the reference in your event handler.
+- Use `simulationRadius` from config to limit how many chunks are fully simulated at once. Chunks outside the radius run at 1/10th tick rate.
+
+### AgeRecipeCondition Datageneration
+When generating recipes programmatically (using `RecipeProvider`), emit the condition using:
+```java
+ConditionalRecipe.builder()
+    .addCondition(new AgeRecipeCondition(HorizonAge.IRON_AGE))
+    .addRecipe(/* your recipe */)
+    .build(consumer, new ResourceLocation(MODID, "my_recipe"));
+```
+
+---
+
+*End of HorizonCore Detailed Specification.*  
+*Next: `02_HorizonData_Detailed.md` — Ores, Crafting, Blocks, Fuels*
