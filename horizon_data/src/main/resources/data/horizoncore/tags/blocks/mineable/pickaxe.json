@@ -1,0 +1,9 @@
+{
+  "replace": false,
+  "values": [
+    "horizoncore:research_bench",
+    "horizoncore:laboratory",
+    "horizoncore:library",
+    "horizoncore:university"
+  ]
+}
