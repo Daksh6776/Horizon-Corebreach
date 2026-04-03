@@ -1,1 +1,0 @@
-﻿{ "parent": "minecraft:item/generated", "textures": { "layer0": "horizondata:item/raw_zinc" } }
